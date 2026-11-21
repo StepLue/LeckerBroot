@@ -1,0 +1,34 @@
+@* Kennzahlen eines Rezepts als kleine Kacheln. *@
+
+<div class="figures">
+    <div class="figure"><span class="fig-value">@Names.Of(Analysis.BreadType)</span><span class="fig-label">Brotart</span></div>
+    <div class="figure"><span class="fig-value">@Fmt.N(Analysis.Ta)</span><span class="fig-label">TA (@Fmt.P(Analysis.Hydration) Wasser)</span></div>
+    <div class="figure"><span class="fig-value">@Fmt.G(Analysis.TotalFlour * Factor)</span><span class="fig-label">Mehl gesamt</span></div>
+    <div class="figure"><span class="fig-value">@Fmt.G(Analysis.TotalDough * Factor)</span><span class="fig-label">Teig gesamt</span></div>
+    @if (Analysis.SourdoughFlour > 0)
+    {
+        <div class="figure"><span class="fig-value">@Fmt.P(Analysis.AcidificationPercent)</span><span class="fig-label">Versäuerung</span></div>
+    }
+    <div class="figure"><span class="fig-value">@Fmt.P(Analysis.RyeShare * 100)</span><span class="fig-label">Roggenanteil</span></div>
+    @if (Analysis.SourRyeFlour > 0)
+    {
+        <div class="figure"><span class="fig-value">@Fmt.P(Analysis.RyeAcidificationPercent)</span><span class="fig-label">vom Roggen versäuert</span></div>
+    }
+    <div class="figure"><span class="fig-value">@Fmt.P(Analysis.SaltPercent)</span><span class="fig-label">Salz</span></div>
+</div>
+
+@if (ShowWarnings && Analysis.Warnings.Count > 0)
+{
+    <ul class="warnings">
+        @foreach (var w in Analysis.Warnings)
+        {
+            <li>@w</li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter, EditorRequired] public RecipeAnalysis Analysis { get; set; } = new();
+    [Parameter] public double Factor { get; set; } = 1;
+    [Parameter] public bool ShowWarnings { get; set; } = true;
+}

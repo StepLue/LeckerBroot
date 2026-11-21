@@ -1,0 +1,732 @@
+@page "/assistent"
+@page "/assistent/{Id:guid}"
+@inject AppStore Store
+@inject NavigationManager Nav
+
+<PageTitle>Rezept entwickeln – LeckerBroot</PageTitle>
+
+@if (_d == null)
+{
+    <p>@(_notFound ? "Rezept nicht gefunden." : "Lade …")</p>
+}
+else if (_existing != null && _existing.IsLocked)
+{
+    <h1>@_existing.Name ist fertig</h1>
+    <p class="hint">Fertige Rezepte lassen sich nur noch in der Menge ändern. Zum Weiterentwickeln in der Rezeptansicht „Kopie weiterentwickeln“ oder „Zurück in Entwicklung“ wählen.</p>
+    <a class="btn small" href="@($"rezept/{_existing.Id}")">Zum Rezept</a>
+}
+else
+{
+    var result = RecipeDesigner.Build(_d, Store.Settings);
+    var preview = new Recipe { Stages = result.Stages };
+    var analysis = RecipeCalculator.Analyze(preview, Store.Settings);
+    var bt = _d.BreadType;
+
+    <div class="page-head compact">
+        <h1>@(_existing == null ? "Rezept entwickeln" : "Rezept ändern: " + _existing.Name)</h1>
+    </div>
+
+    <div class="wizard">
+        <nav class="panel wizard-steps">
+            <ol class="steps">
+                @for (var i = 0; i < StepTitles.Length; i++)
+                {
+                    var n = i;
+                    <li class="@(n == _step ? "active" : n < _step ? "done" : "")" @onclick="() => _step = n">
+                        <span class="step-no">@(n + 1)</span> @StepTitles[n]
+                    </li>
+                }
+            </ol>
+            <div class="wizard-nav">
+                <button class="btn small" disabled="@(_step == 0)" @onclick="() => _step--">← Zurück</button>
+                @if (_step < StepTitles.Length - 1)
+                {
+                    <button class="btn btn-accent small" @onclick="() => _step++">Weiter →</button>
+                }
+            </div>
+            <button class="btn btn-accent save-btn" @onclick="Save">Speichern</button>
+        </nav>
+
+        <section class="panel wizard-form">
+            @switch (_step)
+            {
+                case 0:
+                    <h2>1 · Ziel</h2>
+                    <div class="form-grid">
+                        <label class="wide">Name <input @bind="_d.Name" /></label>
+                        <label>Triebmittel
+                            <select @bind="_d.Leavening" @bind:after="LeaveningChanged">
+                                @foreach (var l in Enum.GetValues<Leavening>())
+                                {
+                                    <option value="@l">@Names.Of(l)</option>
+                                }
+                            </select>
+                        </label>
+                        <label>Form <input @bind="_d.Form" placeholder="freigeschoben, Kasten, Topf …" /></label>
+                        <label>Anzahl <input type="number" min="1" @bind="_d.Count" /></label>
+                        <label>Stückgewicht fertiges Brot (g) <input type="number" min="10" step="10" @bind="_d.PieceWeight" /></label>
+                        <label>Backverlust (%) <input type="number" min="0" max="40" step="0.5" @bind="_d.BakeLossPercent" /></label>
+                    </div>
+                    <div class="hint">
+                        Backverlust ca.: Brötchen 15–20 % · Brot 500 g 12–15 % · Brot 1–1,5 kg 10–13 % · Kastenbrot 8–10 %.<br />
+                        Teig gesamt: <strong>@Fmt.G(result.TargetDough)</strong>
+                    </div>
+                    break;
+
+                case 1:
+                    <h2>2 · Mehlmischung</h2>
+                    <table class="ing-table edit">
+                        <thead><tr><th>Mehl</th><th class="num">Anteil %</th><th class="num">Gramm</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var part in _d.Flours)
+                            {
+                                var p = part;
+                                <tr>
+                                    <td><IngredientSelect Value="p.Flour" ValueChanged="ing => ReplaceFlour(p, ing)" Kinds="FlourKinds" /></td>
+                                    <td class="num"><input class="num-input" type="number" min="0" max="100" step="1" @bind="p.Percent" /></td>
+                                    <td class="num muted">@Fmt.G(result.TotalFlour * p.Percent / Math.Max(1, FlourSum))</td>
+                                    <td><button class="btn btn-danger small" @onclick="() => _d.Flours.Remove(p)">✕</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="actions">
+                        <button class="btn" @onclick="AddFlour">+ Mehl</button>
+                        <button class="btn" @onclick="FillUp" disabled="@(_d.Flours.Count == 0)">Letztes Mehl auf 100 % auffüllen</button>
+                    </div>
+                    <div class="hint">
+                        Summe: <strong class="@(Math.Abs(FlourSum - 100) > 0.5 ? "bad" : "")">@Fmt.P(FlourSum)</strong> ·
+                        Brotart: <strong>@Names.Of(bt)</strong><br />
+                        Nach den Leitsätzen für Brot: Roggenbrot ab 90 % Roggen · Roggenmischbrot über 50 bis unter 90 % ·
+                        Mischbrot 50 : 50 · Weizenmischbrot über 50 bis unter 90 % Weizen · Weizenbrot ab 90 % Weizen.
+                    </div>
+                    break;
+
+                case 2:
+                    var taRange = Guidelines.Ta(bt);
+                    <h2>3 · Teigausbeute</h2>
+                    <div class="form-grid">
+                        <label>TA <input type="number" min="100" max="250" step="1" @bind="_d.Ta" /></label>
+                        <div class="hint">
+                            = @Fmt.P(_d.Ta - 100) Wasser bezogen aufs Mehl<br />
+                            Richtwert @Names.Of(bt): <strong>@Fmt.N(taRange.Min)–@Fmt.N(taRange.Max)</strong>
+                            <button class="btn small" @onclick="() => _d.Ta = taRange.Mid">@Fmt.N(taRange.Mid) übernehmen</button>
+                        </div>
+                    </div>
+                    <div class="hint">
+                        TA = (Mehl + Flüssigkeit) ÷ Mehl × 100. Vollkorn und Roggen binden mehr Wasser (+5 bis 10 Punkte),
+                        Kastenbrote vertragen mehr (170–185). Wasser aus Sauerteig, Vorteig und Brühstück ist hier enthalten
+                        und wird vom Hauptteig abgezogen.
+                    </div>
+                    break;
+
+                case 3:
+                    var acid = Guidelines.Acidification(bt);
+                    var stages = _d.SourStages;
+                    var profile = SourdoughGuide.Profile(_d);
+                    var sugg = SourdoughGuide.Suggest(_d.FlavorLevel);
+                    var firstEstimate = stages.Count > 0 ? SourdoughGuide.EstimateHours(_d.StarterPercent, stages[0].TemperatureC) : null;
+                    <h2>4 · Sauerteig</h2>
+                    <label class="check"><input type="checkbox" @bind="_d.UseSourdough" /> mit Sauerteig</label>
+                    if (_d.UseSourdough)
+                    {
+                        <div class="form-grid">
+                            <label class="wide">Mehl für den Sauerteig
+                                <IngredientSelect Value="_d.SourdoughFlour" ValueChanged="ing => _d.SourdoughFlour = ing"
+                                                  Only="MixFlours" Placeholder="– Mehl aus der Mischung wählen –" />
+                            </label>
+                            <label>Versäuerung (% Gesamtmehl) <input type="number" min="0" max="100" step="1" @bind="_d.AcidificationPercent" /></label>
+                            <label>Anstellgut (% Sauerteigmehl) <input type="number" min="0" max="100" step="1" @bind="_d.StarterPercent" /></label>
+                            <label>Anstellgut
+                                <IngredientSelect Value="_d.Starter" ValueChanged="ing => _d.Starter = ing" Kinds="StarterKinds" />
+                            </label>
+                        </div>
+                        <div class="hint">
+                            Versäuerung für @Names.Of(bt): <strong>@Fmt.N(acid.Min)–@Fmt.N(acid.Max) %</strong> vom Gesamtmehl
+                            <button class="btn tiny" @onclick="() => _d.AcidificationPercent = acid.Mid">@Fmt.N(acid.Mid) % übernehmen</button>
+                            @if (analysis.RyeFlour > 0)
+                            {
+                                var minRye = Guidelines.MinRyeAcidificationPercent(analysis.RyeShare, _d.SourdoughMethod == SourdoughMethod.BerlinerKurzsauer);
+                                <br />
+                                <span class="@(analysis.RyeAcidificationPercent < minRye - 0.5 ? "bad" : "")">
+                                    Vom Roggenmehl versäuert: <strong>@Fmt.P(analysis.RyeAcidificationPercent)</strong>
+                                    – Richtwert bei @Fmt.P(analysis.RyeShare * 100) Roggen: mind. ca. @Fmt.P(Math.Round(minRye))
+                                </span>
+                                <br />
+                                <span class="muted">Roggen braucht Säure, damit seine Enzyme die Stärke nicht abbauen. Je weniger Roggen im Brot, desto größer muss sein versäuerter Anteil sein. Kurzsauer bildet wenig Säure → mind. 50 %.</span>
+                            }
+                        </div>
+
+                        <h3>Führung</h3>
+                        <div class="segmented">
+                            @foreach (var m in Methods)
+                            {
+                                var method = m;
+                                <button class="seg @(_d.SourdoughMethod == method ? "on" : "")" @onclick="() => ApplyMethod(method)">@SourdoughGuide.Name(method)</button>
+                            }
+                        </div>
+                        <p class="hint">@SourdoughGuide.Describe(_d.SourdoughMethod)</p>
+
+                        <div class="table-wrap">
+                        <table class="ing-table edit">
+                            <thead>
+                                <tr><th>Stufe</th><th class="num">Anteil %</th><th class="num">TA</th><th class="num">°C</th><th class="num">Std.</th><th>Hinweis</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                @for (var i = 0; i < stages.Count; i++)
+                                {
+                                    var idx = i;
+                                    var stage = stages[i];
+                                    <tr>
+                                        <td><input class="name-input" @bind="stage.Name" /></td>
+                                        <td class="num"><input class="num-input" type="number" min="0" max="100" step="5" @bind="stage.SharePercent" /></td>
+                                        <td class="num"><input class="num-input" type="number" min="100" max="300" step="5" @bind="stage.Ta" /></td>
+                                        <td class="num"><input class="num-input" type="number" min="0" max="45" step="1" @bind="stage.TemperatureC" /></td>
+                                        <td class="num"><input class="num-input" type="number" min="0" max="72" step="0.5" @bind="stage.Hours" @bind:after="() => stage.HoursNote = string.Empty" /></td>
+                                        <td><input class="note-input" @bind="stage.TemperatureNote" placeholder="z. B. fallend" /></td>
+                                        <td>
+                                            @if (stages.Count > 1)
+                                            {
+                                                <button class="btn btn-danger tiny" @onclick="() => RemoveSourStage(idx)">✕</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                        </div>
+                        <div class="row-between">
+                            <button class="btn small" @onclick="AddSourStage">+ Stufe</button>
+                            @if (firstEstimate is double est)
+                            {
+                                <span class="muted small-text">Faustwert Reifezeit 1. Stufe: ca. @Fmt.N(Math.Round(est)) h (@Fmt.P(_d.StarterPercent) Anstellgut, @Fmt.N(stages[0].TemperatureC) °C)</span>
+                            }
+                        </div>
+
+                        <h3>Zweiter Sauerteig</h3>
+                        <div class="flavor">
+                            <label class="check"><input type="checkbox" @bind="_d.Second.Use" @bind:after="SecondToggled" /> zusätzlich einen zweiten Sauerteig führen (z. B. Weizensauerteig)</label>
+                            @if (_d.Second.Use)
+                            {
+                                <div class="form-grid">
+                                    <label>Name <input @bind="_d.Second.Stage.Name" /></label>
+                                    <label class="wide">Mehl
+                                        <IngredientSelect Value="_d.Second.Flour" ValueChanged="ing => _d.Second.Flour = ing" Only="MixFlours" Placeholder="– Mehl aus der Mischung wählen –" />
+                                    </label>
+                                    <label>Versäuerung (% Gesamtmehl) <input type="number" min="0" max="60" step="1" @bind="_d.Second.AcidificationPercent" /></label>
+                                    <label>Anstellgut (% vom Mehl) <input type="number" min="0" max="100" step="1" @bind="_d.Second.StarterPercent" /></label>
+                                    <label>Anstellgut
+                                        <IngredientSelect Value="_d.Second.Starter ?? _d.Starter" ValueChanged="ing => _d.Second.Starter = ing" Kinds="StarterKinds" />
+                                    </label>
+                                    <label>TA <input type="number" min="100" max="300" step="5" @bind="_d.Second.Stage.Ta" /></label>
+                                    <label>°C <input type="number" min="0" max="45" step="1" @bind="_d.Second.Stage.TemperatureC" /></label>
+                                    <label>Std. <input type="number" min="0" max="72" step="0.5" @bind="_d.Second.Stage.Hours" @bind:after="() => _d.Second.Stage.HoursNote = string.Empty" /></label>
+                                </div>
+                                <div class="actions">
+                                    <button class="btn tiny" @onclick="() => SecondPreset(200)">flüssig (TA 200, 26 °C, 8–12 h)</button>
+                                    <button class="btn tiny" @onclick="() => SecondPreset(150)">fest / Lievito Madre (TA 150)</button>
+                                </div>
+                                <p class="small-text">
+                                    Versäuerung gesamt: <strong>@Fmt.P(_d.AcidificationPercent + _d.Second.AcidificationPercent)</strong>
+                                    (@Fmt.P(_d.AcidificationPercent) + @Fmt.P(_d.Second.AcidificationPercent)) – Richtwert @Names.Of(bt): @Fmt.N(acid.Min)–@Fmt.N(acid.Max) %
+                                </p>
+                            }
+                        </div>
+                        <p class="hint">
+                            Sinnvoll vor allem bei weizenbetonten Misch- und Weizenbroten: Der Roggensauerteig bringt herzhaftes Aroma,
+                            dunklere Krume und Frischhaltung, der Weizensauerteig macht das Brot mild und locker.
+                            Rezepte nutzen z. B. je ca. 10–25 % vom Gesamtmehl für jeden der beiden Sauerteige.
+                            Einen Weizensauerteig kannst du aus deinem Roggen-Anstellgut ansetzen, indem du ihn mit Weizenmehl fütterst.
+                        </p>
+
+                        <h3>Erwarteter Geschmack</h3>
+                        <div class="flavor">
+                            @if (!profile.HasSourdough)
+                            {
+                                <p class="small-text">Ohne Versäuerung – nicht säuerlich.</p>
+                            }
+                            else
+                            {
+                                <div class="flavor-scale">
+                                    <span class="flavor-label">Säuremenge</span>
+                                    <div class="flavor-bar acid" title="Wie sauer: Versäuerung, Getreide, Mehltyp, Reife">
+                                        <span class="flavor-marker" style="left: @SourdoughGuide.Css(profile.Acidity * 100)%"></span>
+                                    </div>
+                                    <strong class="flavor-value">@profile.AcidityText</strong>
+                                </div>
+                                <div class="flavor-ends"><span>kaum</span><span>sehr sauer</span></div>
+
+                                <div class="flavor-scale">
+                                    <span class="flavor-label">Charakter</span>
+                                    <div class="flavor-bar" title="Wie die Säure schmeckt: Temperatur, TA, Anstellgut, Zeit">
+                                        <span class="flavor-marker" style="left: @SourdoughGuide.Css(profile.Character * 100)%"></span>
+                                    </div>
+                                    <strong class="flavor-value">@profile.CharacterText</strong>
+                                </div>
+                                <div class="flavor-ends"><span>mild, milchsauer</span><span>herb, essigsauer</span></div>
+
+                                if (profile.Contributions.Count > 1)
+                                {
+                                    <div class="small-text muted">
+                                        Anteil an der Säure:
+                                        @foreach (var c in profile.Contributions)
+                                        {
+                                            <span class="contrib">@c.Name @Fmt.P(Math.Round(c.AcidSharePercent))</span>
+                                        }
+                                    </div>
+                                }
+
+                                <div class="flavor-target">
+                                    <span class="small-text">Ziel Charakter:</span>
+                                    <span class="muted small-text">mild</span>
+                                    <input type="range" min="1" max="5" step="1" @bind="_d.FlavorLevel" @bind:event="oninput" />
+                                    <span class="muted small-text">herb</span>
+                                    <strong class="small-text">@SourdoughGuide.LevelName(_d.FlavorLevel)</strong>
+                                </div>
+                                <div class="flavor-suggest">
+                                    Vorschlag 1. Sauerteig: @Fmt.N(sugg.TemperatureC) °C · TA @Fmt.N(sugg.Ta) · @Fmt.P(sugg.StarterPercent) Anstellgut · ca. @Fmt.N(sugg.Hours) h
+                                    <button class="btn tiny" disabled="@(stages.Count != 1)" @onclick="ApplyFlavor">Übernehmen</button>
+                                    @if (stages.Count != 1)
+                                    {
+                                        <span class="muted small-text">(nur bei einstufiger Führung)</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <p class="hint">
+                            <strong>Wie sauer</strong> das Brot wird, bestimmen vor allem die Versäuerung, das Getreide im Sauerteig
+                            (Roggen säuert deutlich stärker als Weizen oder Dinkel) und der Mehltyp (Vollkorn und dunkle Typen mehr als helle).
+                            <strong>Wie die Säure schmeckt</strong>, steuern Temperatur, TA, Anstellgut und Zeit: wärmer, weicher, mehr Anstellgut, kürzer → mild (Milchsäure);
+                            kühler, fester, weniger Anstellgut, länger → herb (Essigsäure). Die Skalen sind eine Schätzung, kein Messwert.
+                        </p>
+                    }
+                    else if (bt is BreadType.Roggenbrot or BreadType.Roggenmischbrot or BreadType.Mischbrot)
+                    {
+                        <p class="warnings">Bei diesem Roggenanteil braucht der Teig Säure – ohne Sauerteig wird die Krume klitschig.</p>
+                    }
+                    break;
+
+                case 4:
+                    <h2>5 · Vorteige &amp; Stücke</h2>
+
+                    <section class="option">
+                        <label class="check"><input type="checkbox" @bind="_d.UsePoolish" /> <strong>Poolish</strong> (Weizenvorteig, TA 200)</label>
+                        @if (_d.UsePoolish)
+                        {
+                            <div class="form-grid">
+                                <label class="wide">Mehl
+                                    <IngredientSelect Value="_d.PoolishFlour" ValueChanged="ing => _d.PoolishFlour = ing" Only="MixFlours" Placeholder="– Mehl wählen –" />
+                                </label>
+                                <label>Mehl (% vom Gesamtmehl) <input type="number" min="0" max="100" @bind="_d.PoolishPercent" /></label>
+                                <label>Hefe (% vom Poolish-Mehl) <input type="number" min="0" max="5" step="0.05" @bind="_d.PoolishYeastPercent" /></label>
+                            </div>
+                            <p class="hint">0,1–0,5 % Hefe, 12–16 h bei ca. 20 °C. Aroma, Frischhaltung, offenporige Krume.</p>
+                        }
+                    </section>
+
+                    <section class="option">
+                        <label class="check"><input type="checkbox" @bind="_d.UseScald" /> <strong>Brühstück</strong> (Wasser zählt zur TA)</label>
+                        @if (_d.UseScald)
+                        {
+                            <div class="form-grid">
+                                <label class="wide">Mehl / Schrot
+                                    <IngredientSelect Value="_d.ScaldFlour" ValueChanged="ing => _d.ScaldFlour = ing" Only="MixFlours" Placeholder="– Mehl wählen –" />
+                                </label>
+                                <label>Mehl (% vom Gesamtmehl) <input type="number" min="0" max="100" @bind="_d.ScaldPercent" /></label>
+                                <label>Wasser : Mehl <input type="number" min="0.5" max="5" step="0.1" @bind="_d.ScaldWaterRatio" /></label>
+                            </div>
+                            <p class="hint">Kochendes Wasser 1 : 1 bis 1 : 3, mind. 4 h quellen. Macht das Brot saftig und länger frisch.</p>
+                        }
+                    </section>
+
+                    <section class="option">
+                        <label class="check"><input type="checkbox" @bind="_d.UseSoaker" /> <strong>Quellstück</strong> (Saaten, Wasser zählt nicht zur TA)</label>
+                        @if (_d.UseSoaker)
+                        {
+                            <div class="form-grid">
+                                <label class="wide">Saaten
+                                    <IngredientSelect Value="_d.SoakerSeeds" ValueChanged="ing => _d.SoakerSeeds = ing" Kinds="SeedKinds" Placeholder="– Saaten wählen –" />
+                                </label>
+                                <label>Saaten (% vom Gesamtmehl) <input type="number" min="0" max="60" @bind="_d.SoakerPercent" /></label>
+                                <label>Wasser : Saaten <input type="number" min="0" max="3" step="0.1" @bind="_d.SoakerWaterRatio" /></label>
+                            </div>
+                            <p class="hint">Saaten 10–30 %, mit kaltem Wasser ca. 1 : 1, 8–12 h. So ziehen sie dem Teig kein Wasser.</p>
+                        }
+                    </section>
+
+                    <section class="option">
+                        <label class="check"><input type="checkbox" @bind="_d.UseAutolyse" /> <strong>Autolyse</strong> (Mehl + Wasser 30–60 min vorquellen)</label>
+                    </section>
+                    break;
+
+                case 5:
+                    <h2>6 · Salz, Hefe &amp; Zusätze</h2>
+                    <div class="form-grid">
+                        <label>Salz (%) <input type="number" min="0" max="5" step="0.1" @bind="_d.SaltPercent" /></label>
+                        <label>Hefe (%) <input type="number" min="0" max="10" step="0.1" @bind="_d.YeastPercent" /></label>
+                        <label>Hefe-Sorte
+                            <IngredientSelect Value="_d.Yeast" ValueChanged="ing => _d.Yeast = ing" Kinds="YeastKinds" />
+                        </label>
+                    </div>
+                    <p class="hint">
+                        Salz 1,8–2,2 % · Frischhefe direkt 1–3 %, lange kalte Gare 0,1–0,5 %, zum Sauerteig 0,5–1 % ·
+                        Trockenhefe = ⅓ der Frischhefe.
+                    </p>
+                    <h3>Weitere Zutaten (in % vom Gesamtmehl)</h3>
+                    <table class="ing-table edit">
+                        <tbody>
+                            @foreach (var extra in _d.Extras)
+                            {
+                                var x = extra;
+                                <tr>
+                                    <td><IngredientSelect Value="x.Ingredient" ValueChanged="ing => x.Ingredient = ing" Kinds="ExtraKinds" /></td>
+                                    <td class="num"><input class="num-input" type="number" min="0" step="0.1" @bind="x.Percent" /></td>
+                                    <td class="num muted">@Fmt.G(result.TotalFlour * x.Percent / 100)</td>
+                                    <td><button class="btn btn-danger small" @onclick="() => _d.Extras.Remove(x)">✕</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <button class="btn" @onclick="AddExtra">+ Zutat</button>
+                    <p class="hint">Backmalz inaktiv 1–3 % · Brotgewürz 0,5–2 % · Honig/Zucker 0–5 % · Butter/Öl 0–5 %.</p>
+                    break;
+
+                case 6:
+                    var hasPre = result.Stages.Any(x => x.Type != StageType.Hauptteig);
+                    var water = Planning.WaterTemperature(_d.Temperatures, hasPre);
+                    var waterWarn = Planning.WaterTemperatureWarning(water);
+                    <h2>7 · Temperaturen</h2>
+                    <div class="form-grid">
+                        <label>Zielteigtemperatur (°C) <input type="number" min="15" max="35" step="0.5" @bind="_d.Temperatures.TargetDoughC" /></label>
+                        <label>Mehltemperatur (°C) <input type="number" min="0" max="35" step="0.5" @bind="_d.Temperatures.FlourC" /></label>
+                        @if (hasPre)
+                        {
+                            <label>Temperatur Vorstufen (°C) <input type="number" min="0" max="40" step="0.5" @bind="_d.Temperatures.PreDoughC" /></label>
+                        }
+                        <label>Erwärmung beim Kneten (°C) <input type="number" min="0" max="15" step="0.5" @bind="_d.Temperatures.KneadWarmingC" /></label>
+                    </div>
+                    <div class="result-box">
+                        Schüttwasser: <strong class="big-number">@Fmt.N(water) °C</strong>
+                        <span class="muted small-text">(@(hasPre ? "3 × Teigtemp. − Mehl − Vorstufen" : "2 × Teigtemp. − Mehl") − Knet-Erwärmung)</span>
+                    </div>
+                    if (waterWarn != null)
+                    {
+                        <p class="warnings">@waterWarn</p>
+                    }
+                    <div class="actions">
+                        <button class="btn tiny" @onclick="ResetTemperatures">Richtwerte für @Names.Of(bt)</button>
+                    </div>
+                    <p class="hint">
+                        Zielteigtemperatur: Weizen 24–26 °C · Dinkel 24–25 °C · Roggen/Roggenmisch 27–30 °C.
+                        Die Knetmaschine erwärmt den Teig: Roggen nur mischen (ca. 1 °C), Weizen auskneten (3–6 °C).
+                        Mehl- und Vorstufentemperatur entsprechen meist der Raumtemperatur.
+                    </p>
+                    break;
+
+                case 7:
+                    <h2>8 · Ablauf</h2>
+                    <h3>Vorstufen</h3>
+                    <table class="ing-table">
+                        <tbody>
+                            @foreach (var st in result.Stages.Where(x => x.Type != StageType.Hauptteig))
+                            {
+                                <tr>
+                                    <td>@st.Name @(st.FollowsPrevious ? "(baut auf der vorigen Stufe auf)" : "")</td>
+                                    <td class="num">@Planning.Duration(st.PlanHours * 60)</td>
+                                    <td class="muted small-text">@st.Temperature</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <p class="small-text muted">Standzeiten der Vorstufen stellst du in Schritt 4 und 5 ein. Sie laufen parallel und sind zum Hauptteig reif.</p>
+                    <h3>Hauptteig bis Auskühlen</h3>
+                    <ProcessEditor Steps="_d.Process" />
+                    <div class="actions">
+                        <button class="btn tiny" @onclick="ResetProcess">Richtwerte für @Names.Of(bt)</button>
+                    </div>
+                    <p class="hint">
+                        Roggen: kurz mischen, 20–45 min Teigruhe, Stückgare 45–75 min bis Risse sichtbar.
+                        Weizen: auskneten, Stockgare 1–3 h mit Dehnen &amp; Falten (oder 12–48 h kalt bei 4–6 °C), Stückgare 45–90 min, Fingerprobe.
+                    </p>
+                    break;
+
+                case 8:
+                    <h2>9 · Backen</h2>
+                    <BakeProfileEditor Phases="_d.BakeProfile"
+                                       @bind-PreheatTemperatureC="_d.PreheatTemperatureC"
+                                       @bind-PreheatMinutes="_d.PreheatMinutes"
+                                       @bind-CoreTemperatureC="_d.CoreTemperatureC" />
+                    <div class="actions">
+                        <button class="btn tiny" @onclick="ResetBake">Richtwerte für @Fmt.G(_d.PieceWeight) @Names.Of(bt)</button>
+                        <span class="muted small-text">Faustwert Backzeit: ca. @Planning.Duration(Planning.BakeMinutes(_d.PieceWeight, bt, _d.Form))</span>
+                    </div>
+                    <p class="hint">
+                        Brötchen 18–22 min · Brot 500 g 35–45 min · 1 kg 50–60 min · Roggenbrot 1–1,5 kg 60–80 min.
+                        Heiß mit Dampf anbacken (10–15 min), Dampf ablassen, fallend auf 200–210 °C ausbacken.
+                        Im Topf: 20–25 min mit Deckel. Kerntemperatur Weizen ca. 96 °C, Roggen ca. 98 °C.
+                    </p>
+                    break;
+
+                default:
+                    <h2>Ergebnis</h2>
+                    <p>
+                        <strong>@_d.Name</strong> – @Names.Of(bt), @_d.Count × @Fmt.G(_d.PieceWeight),
+                        Teig gesamt @Fmt.G(analysis.TotalDough).
+                    </p>
+                    if (result.Warnings.Count > 0)
+                    {
+                        <p class="warnings">Bitte die Hinweise prüfen – speichern geht trotzdem.</p>
+                    }
+                    <p class="hint">Nach dem Speichern kannst du in der Rezeptansicht mit „Backtag planen“ alle Zeiten rückwärts vom gewünschten Fertig-Zeitpunkt berechnen lassen.</p>
+                    <button class="btn btn-accent" @onclick="Save">Rezept speichern</button>
+                    break;
+            }
+
+        </section>
+
+        <aside class="preview">
+            <div class="preview-head">Vorschau</div>
+            <div class="preview-body">
+                @if (result.Warnings.Count > 0)
+                {
+                    <ul class="warnings">
+                        @foreach (var w in result.Warnings) { <li>@w</li> }
+                    </ul>
+                }
+                <div class="taste-chip block">Geschmack: <strong>@SourdoughGuide.Profile(_d).Summary</strong></div>
+                <KeyFigures Analysis="analysis" ShowWarnings="false" />
+                <StageList Stages="result.Stages" Analysis="analysis" />
+            </div>
+        </aside>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+
+    private static readonly string[] StepTitles = { "Ziel", "Mehl", "TA", "Sauerteig", "Vorstufen", "Salz & Co.", "Temperatur", "Ablauf", "Backen", "Ergebnis" };
+    private static readonly SourdoughMethod[] Methods =
+    {
+        SourdoughMethod.Einstufig, SourdoughMethod.FallendeTemperatur, SourdoughMethod.BerlinerKurzsauer,
+        SourdoughMethod.DetmolderDreistufig, SourdoughMethod.Eigene,
+    };
+    private static readonly IngredientKind[] FlourKinds = { IngredientKind.Mehl };
+    private static readonly IngredientKind[] StarterKinds = { IngredientKind.Anstellgut };
+    private static readonly IngredientKind[] SeedKinds = { IngredientKind.Saaten, IngredientKind.Sonstiges };
+    private static readonly IngredientKind[] YeastKinds = { IngredientKind.Hefe };
+    private static readonly IngredientKind[] ExtraKinds = { IngredientKind.Sonstiges, IngredientKind.Saaten, IngredientKind.Fluessigkeit, IngredientKind.Mehl };
+
+    private RecipeDesign? _d;
+    private Recipe? _existing;
+    private bool _notFound;
+    private int _step;
+
+    private double FlourSum => _d?.Flours.Sum(f => f.Percent) ?? 0;
+    private IEnumerable<Ingredient> MixFlours => _d?.Flours.Select(f => f.Flour) ?? Enumerable.Empty<Ingredient>();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _notFound = false;
+        _step = 0;
+        if (Id is Guid id)
+        {
+            _existing = Store.GetRecipe(id);
+            if (_existing?.Design == null)
+            {
+                _d = null;
+                _notFound = true;
+                return;
+            }
+            _d = AppStore.DeepCopy(_existing.Design);
+        }
+        else
+        {
+            _existing = null;
+            _d = NewDesign();
+        }
+        RecipeDesigner.ApplyPlanningDefaults(_d);
+        // Ältere Rezepte ohne Stufenliste übernehmen
+        if (_d.SourStages.Count == 0)
+            _d.SourStages = _d.EffectiveSourStages().Select(x => x.Copy()).ToList();
+    }
+
+    private RecipeDesign NewDesign()
+    {
+        var rye = Store.Default(IngredientKind.Mehl, SeedData.Rye1150Id, GenericFlour);
+        var wheat = Store.Default(IngredientKind.Mehl, SeedData.Wheat1050Id, GenericFlour);
+        return new RecipeDesign
+        {
+            Name = "Neues Brot",
+            Flours = new()
+            {
+                new FlourPart { Flour = rye, Percent = 70 },
+                new FlourPart { Flour = wheat, Percent = 30 },
+            },
+            Ta = 172,
+            SourdoughFlour = rye.Clone(),
+            AcidificationPercent = 35,
+            Water = Store.Default(IngredientKind.Fluessigkeit, SeedData.WaterId, SeedData.Water),
+            Salt = Store.Default(IngredientKind.Salz, SeedData.SaltId, SeedData.Salt),
+            Yeast = Store.Default(IngredientKind.Hefe, SeedData.FreshYeastId, SeedData.FreshYeast),
+            Starter = Store.Default(IngredientKind.Anstellgut, SeedData.RyeStarterId, SeedData.RyeStarter),
+            SourdoughMethod = SourdoughMethod.Einstufig,
+            SourStages = SourdoughGuide.Preset(SourdoughMethod.Einstufig).Stages,
+            StarterPercent = SourdoughGuide.Preset(SourdoughMethod.Einstufig).StarterPercent,
+        };
+    }
+
+    private void ApplyMethod(SourdoughMethod method)
+    {
+        if (_d == null) return;
+        _d.SourdoughMethod = method;
+        if (method == SourdoughMethod.Eigene) return;   // aktuelle Werte behalten
+        var (stages, starter) = SourdoughGuide.Preset(method);
+        _d.SourStages = stages;
+        _d.StarterPercent = starter;
+    }
+
+    private void AddSourStage()
+    {
+        if (_d == null) return;
+        _d.SourStages.Add(new SourStage { Name = $"Stufe {_d.SourStages.Count + 1}", SharePercent = 0, Ta = 200, TemperatureC = 25, Hours = 4 });
+        _d.SourdoughMethod = SourdoughMethod.Eigene;
+    }
+
+    private void RemoveSourStage(int index)
+    {
+        if (_d == null || _d.SourStages.Count <= 1 || index < 0 || index >= _d.SourStages.Count) return;
+        _d.SourStages.RemoveAt(index);
+        _d.SourdoughMethod = SourdoughMethod.Eigene;
+    }
+
+    private void ResetTemperatures()
+    {
+        if (_d == null) return;
+        var bt = _d.BreadType;
+        _d.Temperatures.TargetDoughC = Planning.DefaultTargetDoughTemp(bt);
+        _d.Temperatures.KneadWarmingC = Planning.DefaultKneadWarming(bt);
+    }
+
+    private void ResetProcess()
+    {
+        if (_d == null) return;
+        _d.Process = Planning.DefaultProcess(_d.BreadType, _d.UseAutolyse, _d.Leavening == Leavening.Hefe);
+    }
+
+    private void ResetBake()
+    {
+        if (_d == null) return;
+        var bt = _d.BreadType;
+        _d.BakeProfile = Planning.DefaultBakeProfile(_d.PieceWeight, bt, _d.Form);
+        _d.CoreTemperatureC = Planning.CoreTemperature(bt);
+        _d.PreheatTemperatureC = _d.BakeProfile.Count > 0 ? _d.BakeProfile.Max(b => b.TemperatureC) : 250;
+    }
+
+    private void SecondToggled()
+    {
+        if (_d == null || !_d.Second.Use) return;
+        if (_d.Second.Flour == null)
+            _d.Second.Flour = _d.Flours.Select(f => f.Flour).FirstOrDefault(f => f.Grain is Grain.Weizen or Grain.Dinkel)?.Clone();
+        // Gesamtversäuerung ungefähr halten: ersten Sauerteig etwas zurücknehmen
+        if (_d.AcidificationPercent > _d.Second.AcidificationPercent)
+            _d.AcidificationPercent = Math.Max(5, _d.AcidificationPercent - _d.Second.AcidificationPercent);
+    }
+
+    private void SecondPreset(double ta)
+    {
+        if (_d == null) return;
+        var st = _d.Second.Stage;
+        st.Ta = ta;
+        if (ta >= 180)
+        {
+            st.TemperatureC = 26; st.Hours = 10; st.HoursNote = "8–12 h";
+            _d.Second.StarterPercent = 10;
+        }
+        else
+        {
+            st.TemperatureC = 27; st.Hours = 4; st.HoursNote = "3–4 h";
+            _d.Second.StarterPercent = 30;
+        }
+    }
+
+    private void ApplyFlavor()
+    {
+        if (_d == null || _d.SourStages.Count != 1) return;
+        var s = SourdoughGuide.Suggest(_d.FlavorLevel);
+        var stage = _d.SourStages[0];
+        stage.TemperatureC = s.TemperatureC;
+        stage.TemperatureNote = string.Empty;
+        stage.Ta = s.Ta;
+        stage.Hours = s.Hours;
+        stage.HoursNote = string.Empty;
+        _d.StarterPercent = s.StarterPercent;
+        _d.SourdoughMethod = SourdoughMethod.Eigene;
+    }
+
+    private static Ingredient GenericFlour() => new() { Name = "Mehl", Kind = IngredientKind.Mehl, FlourFraction = 1 };
+
+    private void LeaveningChanged()
+    {
+        if (_d == null) return;
+        if (_d.Leavening == Leavening.Hefe)
+        {
+            _d.UseSourdough = false;
+            if (_d.YeastPercent <= 0) _d.YeastPercent = 1.5;
+        }
+        else
+        {
+            _d.UseSourdough = true;
+            if (_d.Leavening == Leavening.SauerteigUndHefe && _d.YeastPercent <= 0) _d.YeastPercent = 0.5;
+        }
+    }
+
+    /// <summary>Mehl in der Mischung tauschen – Vorstufen, die dieses Mehl nutzen, wandern mit.</summary>
+    private void ReplaceFlour(FlourPart part, Ingredient newFlour)
+    {
+        if (_d == null) return;
+        var oldId = part.Flour.Id;
+        part.Flour = newFlour;
+        if (_d.SourdoughFlour?.Id == oldId) _d.SourdoughFlour = newFlour.Clone();
+        if (_d.PoolishFlour?.Id == oldId) _d.PoolishFlour = newFlour.Clone();
+        if (_d.ScaldFlour?.Id == oldId) _d.ScaldFlour = newFlour.Clone();
+        if (_d.Second.Flour?.Id == oldId) _d.Second.Flour = newFlour.Clone();
+    }
+
+    private void AddFlour()
+    {
+        if (_d == null) return;
+        var used = _d.Flours.Select(f => f.Flour.Id).ToHashSet();
+        var next = Store.Flours.FirstOrDefault(f => !used.Contains(f.Id)) ?? Store.Flours.FirstOrDefault();
+        var rest = Math.Max(0, 100 - FlourSum);
+        _d.Flours.Add(new FlourPart { Flour = next?.Clone() ?? GenericFlour(), Percent = rest });
+    }
+
+    private void FillUp()
+    {
+        if (_d == null || _d.Flours.Count == 0) return;
+        var last = _d.Flours[^1];
+        var others = FlourSum - last.Percent;
+        last.Percent = Math.Max(0, 100 - others);
+    }
+
+    private void AddExtra()
+    {
+        if (_d == null) return;
+        var first = Store.OfKind(IngredientKind.Sonstiges).FirstOrDefault()?.Clone()
+                    ?? new Ingredient { Name = "Zutat", Kind = IngredientKind.Sonstiges };
+        _d.Extras.Add(new ExtraPart { Ingredient = first, Percent = 1 });
+    }
+
+    private async Task Save()
+    {
+        if (_d == null) return;
+        if (_existing != null && _existing.IsLocked) return;
+        var target = _existing ?? new Recipe();
+        var recipe = RecipeDesigner.ToRecipe(_d, Store.Settings, target);
+        recipe.SavedCount = null;
+        recipe.SavedPieceWeight = null;
+        await Store.SaveRecipeAsync(recipe);
+        Nav.NavigateTo($"rezept/{recipe.Id}");
+    }
+}

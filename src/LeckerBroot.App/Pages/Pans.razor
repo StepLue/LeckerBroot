@@ -1,0 +1,117 @@
+@page "/formen"
+@inject AppStore Store
+
+<PageTitle>Kastenformen – LeckerBroot</PageTitle>
+
+<div class="page-head compact">
+    <h1>Kastenformen</h1>
+    <div class="actions">
+        <button class="btn btn-accent small" @onclick="Add">+ Form</button>
+    </div>
+</div>
+
+@if (_loaded)
+{
+    <div class="view-grid">
+        <section class="panel">
+            @if (Store.Data.Pans.Count == 0)
+            {
+                <p class="muted">Noch keine Form angelegt.</p>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="ing-table edit">
+                        <thead>
+                            <tr>
+                                <th>Name</th><th class="num">Länge cm</th><th class="num">Breite cm</th><th class="num">Höhe cm</th>
+                                <th class="num">ausgelitert ml</th><th class="num">Volumen</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var pan in Store.Data.Pans)
+                            {
+                                var p = pan;
+                                <tr>
+                                    <td><input class="name-input" @bind="p.Name" @bind:after="Save" /></td>
+                                    <td class="num"><input class="num-input" type="number" min="0" step="0.5" @bind="p.LengthCm" @bind:after="Save" /></td>
+                                    <td class="num"><input class="num-input" type="number" min="0" step="0.5" @bind="p.WidthCm" @bind:after="Save" /></td>
+                                    <td class="num"><input class="num-input" type="number" min="0" step="0.5" @bind="p.HeightCm" @bind:after="Save" /></td>
+                                    <td class="num"><input class="num-input" type="number" min="0" step="10" @bind="p.MeasuredVolumeMl" @bind:after="Save" /></td>
+                                    <td class="num strong">@Fmt.N(p.VolumeL) l</td>
+                                    <td>
+                                        @if (_confirmDelete == p.Id)
+                                        {
+                                            <button class="btn btn-danger tiny" @onclick="() => Delete(p)">Löschen?</button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn tiny" title="Löschen" @onclick="() => _confirmDelete = p.Id">✕</button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <p class="small-text muted">Änderungen werden sofort gespeichert. Ist „ausgelitert“ eingetragen, gilt dieser Wert statt der Maße.</p>
+            }
+        </section>
+
+        <aside class="side-col">
+            <section class="panel panel-info">
+                <h3>Volumen bestimmen</h3>
+                <p class="small-text">
+                    <strong>Am genauesten:</strong> Form auf die Küchenwaage stellen, auf 0 tarieren und randvoll mit Wasser füllen.
+                    Die Gramm entsprechen den Millilitern.
+                </p>
+                <p class="small-text">
+                    <strong>Mit Maßen:</strong> Innen messen. Bei schrägen Wänden Länge und Breite in halber Höhe nehmen,
+                    sonst wird das Volumen zu groß.
+                </p>
+            </section>
+            <section class="panel">
+                <h3>Teig je Liter Form</h3>
+                <table class="ing-table">
+                    <tbody>
+                        @foreach (var bt in new[] { BreadType.Weizenbrot, BreadType.Weizenmischbrot, BreadType.Mischbrot, BreadType.Roggenmischbrot, BreadType.Roggenbrot })
+                        {
+                            <tr><td>@Names.Of(bt)</td><td class="num">ca. @Fmt.N(Guidelines.PanDoughPerLiter(bt)) g/l</td></tr>
+                        }
+                    </tbody>
+                </table>
+                <p class="small-text muted">
+                    Richtwerte für offen gebackene Brote. Luftige Teige brauchen weniger, dichte Roggen- und Vollkornteige mehr.
+                    Hat ein Rezept eine Form gut gefüllt, in der Rezeptansicht „Aktuelle Menge passt genau – merken“ wählen –
+                    dann rechnet die App andere Formen für dieses Rezept genau im selben Verhältnis um.
+                </p>
+            </section>
+        </aside>
+    </div>
+}
+
+@code {
+    private bool _loaded;
+    private Guid? _confirmDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _loaded = true;
+    }
+
+    private async Task Add()
+    {
+        Store.Data.Pans.Add(new BakingPan { Name = $"Kastenform {Store.Data.Pans.Count + 1}" });
+        await Store.SaveAsync();
+    }
+
+    private async Task Save() => await Store.SaveAsync();
+
+    private async Task Delete(BakingPan pan)
+    {
+        Store.Data.Pans.Remove(pan);
+        _confirmDelete = null;
+        await Store.SaveAsync();
+    }
+}

@@ -1,0 +1,109 @@
+@page "/rezepte"
+@inject AppStore Store
+
+<PageTitle>Rezepte – LeckerBroot</PageTitle>
+
+<div class="page-head compact">
+    <h1>Rezepte</h1>
+    <div class="actions">
+        <a class="btn small" href="rezept/neu">+ Eintragen</a>
+        <a class="btn btn-accent small" href="assistent">+ Entwickeln</a>
+    </div>
+</div>
+
+<div class="segmented status-tabs">
+    <button class="seg @(_status == "Fertig" ? "on" : "")" @onclick="@(() => _status = "Fertig")">Fertige Rezepte (@(Store.Data.Recipes.Count(x => x.Status == RecipeStatus.Fertig)))</button>
+    <button class="seg @(_status == "Entwicklung" ? "on" : "")" @onclick="@(() => _status = "Entwicklung")">In Entwicklung (@(Store.Data.Recipes.Count(x => x.Status == RecipeStatus.Entwicklung)))</button>
+    <button class="seg @(_status == "" ? "on" : "")" @onclick="@(() => _status = "")">Alle</button>
+</div>
+
+<div class="filters panel">
+    <input class="search" type="search" placeholder="Suchen (Name, Mehl, Schlagwort) …"
+           @bind="_search" @bind:event="oninput" />
+    <select @bind="_leavening">
+        <option value="">Alle Triebmittel</option>
+        @foreach (var l in Enum.GetValues<Leavening>())
+        {
+            <option value="@l.ToString()">@Names.Of(l)</option>
+        }
+    </select>
+    <select @bind="_breadType">
+        <option value="">Alle Brotarten</option>
+        @foreach (var b in Enum.GetValues<BreadType>().Where(b => b != BreadType.Unbekannt))
+        {
+            <option value="@b.ToString()">@Names.Of(b)</option>
+        }
+    </select>
+</div>
+
+@if (!_loaded)
+{
+    <p>Lade …</p>
+}
+else
+{
+    var list = Filtered().ToList();
+    if (list.Count == 0)
+    {
+        <p class="muted">Keine Rezepte gefunden.</p>
+    }
+    <div class="cards">
+        @foreach (var item in list)
+        {
+            var r = item.Recipe;
+            <div class="card">
+                <button class="star @(r.Favorite ? "on" : "")" title="Favorit" @onclick="() => ToggleFavorite(r)">★</button>
+                <a class="card-link" href="@($"rezept/{r.Id}")">
+                    <span class="card-title">@r.Name @if (r.Status == RecipeStatus.Entwicklung) { <span class="badge dev">in Entwicklung</span> }</span>
+                    <span class="card-sub">@Names.Of(item.Analysis.BreadType) · @Names.Of(r.Leavening) · TA @Fmt.N(item.Analysis.Ta)</span>
+                    <span class="card-sub muted">@r.Count × @Fmt.G(r.PieceWeight)@(string.IsNullOrWhiteSpace(r.Form) ? "" : " · " + r.Form)</span>
+                </a>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private bool _loaded;
+    private string _search = "";
+    private string _leavening = "";
+    private string _breadType = "";
+    private string _status = "Fertig";
+
+    private record Item(Recipe Recipe, RecipeAnalysis Analysis);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _status = Store.Data.Recipes.Any(r => r.Status == RecipeStatus.Fertig) ? "Fertig" : "Entwicklung";
+        _loaded = true;
+    }
+
+    private IEnumerable<Item> Filtered()
+    {
+        var q = _search.Trim();
+        foreach (var r in Store.Data.Recipes.OrderByDescending(r => r.Favorite).ThenBy(r => r.Name))
+        {
+            var a = RecipeCalculator.Analyze(r, Store.Settings);
+            if (_status != "" && r.Status.ToString() != _status) continue;
+            if (_leavening != "" && r.Leavening.ToString() != _leavening) continue;
+            if (_breadType != "" && a.BreadType.ToString() != _breadType) continue;
+            if (q != "" && !Matches(r, q)) continue;
+            yield return new Item(r, a);
+        }
+    }
+
+    private static bool Matches(Recipe r, string q)
+    {
+        bool Has(string? s) => s != null && s.Contains(q, StringComparison.OrdinalIgnoreCase);
+        return Has(r.Name) || Has(r.Category) || Has(r.Form) || Has(r.Notes)
+               || r.Tags.Any(Has)
+               || r.Stages.Any(s => s.Ingredients.Any(i => Has(Names.Display(i.Ingredient))));
+    }
+
+    private async Task ToggleFavorite(Recipe r)
+    {
+        r.Favorite = !r.Favorite;
+        await Store.SaveAsync();
+    }
+}

@@ -1,0 +1,353 @@
+@page "/rezept/{Id:guid}"
+@inject AppStore Store
+@inject NavigationManager Nav
+
+<PageTitle>@(_recipe?.Name ?? "Rezept") – LeckerBroot</PageTitle>
+
+@if (!_loaded)
+{
+    <p>Lade …</p>
+}
+else if (_recipe == null)
+{
+    <h1>Rezept nicht gefunden</h1>
+    <p><a href="rezepte">Zur Rezeptliste</a></p>
+}
+else
+{
+    var analysis = RecipeCalculator.Analyze(_recipe, Store.Settings);
+    var target = RecipeCalculator.DoughWeight(_count, _pieceWeight, _recipe.BakeLossPercent);
+    var factor = analysis.TotalDough > 0 ? target / analysis.TotalDough : 1;
+
+    <div class="page-head compact">
+        <h1>
+            <button class="star @(_recipe.Favorite ? "on" : "")" title="Favorit" @onclick="ToggleFavorite">★</button>
+            @_recipe.Name
+            @if (_recipe.IsLocked)
+            {
+                <span class="badge done">fertig</span>
+            }
+            else
+            {
+                <span class="badge dev">in Entwicklung</span>
+            }
+        </h1>
+        <div class="actions">
+            @if (!_recipe.IsLocked)
+            {
+                if (_recipe.Design != null)
+                {
+                    <a class="btn btn-accent small" href="@($"assistent/{_recipe.Id}")">Im Assistenten ändern</a>
+                }
+                <a class="btn small" href="@($"rezept/{_recipe.Id}/bearbeiten")">Bearbeiten</a>
+                <button class="btn small" @onclick="MarkFinished">Als fertig markieren</button>
+            }
+            else
+            {
+                <button class="btn small" @onclick="Duplicate">Kopie weiterentwickeln</button>
+                if (_confirmReopen)
+                {
+                    <button class="btn btn-danger small" @onclick="Reopen">Wirklich zurück in Entwicklung</button>
+                    <button class="btn small" @onclick="() => _confirmReopen = false">Abbrechen</button>
+                }
+                else
+                {
+                    <button class="btn small" @onclick="() => _confirmReopen = true">Zurück in Entwicklung</button>
+                }
+            }
+            @if (!_recipe.IsLocked)
+            {
+                <button class="btn small" @onclick="Duplicate">Duplizieren</button>
+            }
+            @if (_confirmDelete)
+            {
+                <button class="btn btn-danger small" @onclick="Delete">Wirklich löschen</button>
+                <button class="btn small" @onclick="() => _confirmDelete = false">Abbrechen</button>
+            }
+            else
+            {
+                <button class="btn small" @onclick="() => _confirmDelete = true">Löschen</button>
+            }
+        </div>
+    </div>
+
+    if (_recipe.IsLocked)
+    {
+        <p class="hint">
+            Fertiges Rezept@(_recipe.FinishedAt is DateTime fin ? " seit " + fin.ToString("dd.MM.yyyy", System.Globalization.CultureInfo.InvariantCulture) : "") –
+            nur noch die Menge lässt sich ändern. Zum Weiterentwickeln eine Kopie anlegen oder das Rezept zurück in die Entwicklung holen.
+        </p>
+    }
+
+    <p class="subline">
+        @Names.Of(analysis.BreadType) · @Names.Of(_recipe.Leavening)
+        @if (!string.IsNullOrWhiteSpace(_recipe.Form)) { <span> · @_recipe.Form</span> }
+        @if (_recipe.Tags.Count > 0) { <span> · @string.Join(", ", _recipe.Tags)</span> }
+        @if (_recipe.Design != null) { <span class="taste-chip">Geschmack: @SourdoughGuide.Profile(_recipe.Design).Summary</span> }
+    </p>
+
+    <div class="view-grid">
+        <div>
+            <section class="panel">
+                <StageList Stages="_recipe.Stages" Analysis="analysis" Factor="factor" ShowBakerPercent="_showBakerPercent" />
+            </section>
+            <section class="panel">
+                <div class="row-between">
+                    <h3>Ablauf &amp; Backen</h3>
+                    <a class="btn btn-accent small" href="@($"planen/{_recipe.Id}")">Backtag planen</a>
+                </div>
+                @if (_recipe.Process.Count == 0 && _recipe.BakeProfile.Count == 0)
+                {
+                    <p class="hint">Für dieses Rezept ist noch kein Ablauf hinterlegt.</p>
+                    if (!_recipe.IsLocked)
+                    {
+                        <button class="btn small" @onclick="AddDefaultPlan">Richtwerte für @Names.Of(analysis.BreadType) übernehmen</button>
+                    }
+                }
+                else
+                {
+                    <ProcessView Recipe="_recipe" />
+                }
+            </section>
+        </div>
+
+        <aside class="side-col">
+            <section class="panel panel-tint">
+                <h3>Menge</h3>
+                <div class="scaler">
+                    <label>Anzahl
+                        <input type="number" min="1" step="1" @bind="_count" @bind:event="oninput" />
+                    </label>
+                    <span class="times">×</span>
+                    <label>Brot (g)
+                        <input type="number" min="10" step="10" @bind="_pieceWeight" @bind:event="oninput" />
+                    </label>
+                </div>
+                @if (ShowPan(analysis.BreadType))
+                {
+                    var pan = SelectedPan;
+                    var gpl = DoughPerLiter(analysis.BreadType);
+                    <div class="pan-box">
+                        <label>Kastenform
+                            <select value="@(_panId?.ToString() ?? "")" @onchange="e => SelectPan(e, analysis.BreadType)">
+                                <option value="">– Form wählen –</option>
+                                @foreach (var p in Store.Data.Pans)
+                                {
+                                    <option value="@p.Id.ToString()">@p.Name (@Fmt.N(p.VolumeL) l)</option>
+                                }
+                            </select>
+                        </label>
+                        @if (pan != null)
+                        {
+                            <div class="small-text">
+                                @Fmt.G(gpl * pan.VolumeL) Teig je Form ·
+                                @Fmt.N(gpl) g/l <span class="muted">(@(_recipe.PanDoughPerLiter > 0 ? "für dieses Rezept eingestellt" : "Richtwert " + Names.Of(analysis.BreadType)))</span>
+                            </div>
+                            <div class="actions">
+                                <button class="btn tiny" @onclick="() => ApplyPan(analysis.BreadType)">Menge auf Form setzen</button>
+                                <button class="btn tiny" @onclick="CalibratePan" title="Die aktuelle Teigmenge je Brot hat die Form gut gefüllt">Aktuelle Menge passt genau – merken</button>
+                            </div>
+                        }
+                        else if (Store.Data.Pans.Count == 0)
+                        {
+                            <p class="small-text">Noch keine Kastenform angelegt.</p>
+                        }
+                        <a class="small-text" href="formen">Formen verwalten</a>
+                    </div>
+                }
+                <div class="small-text">
+                    Teig gesamt <strong>@Fmt.G(target)</strong>
+                    <span class="muted">· @Fmt.P(_recipe.BakeLossPercent) Backverlust · Faktor @Fmt.N(factor)</span>
+                </div>
+                <div class="actions">
+                    <button class="btn small" @onclick="SaveAdjustment" disabled="@(!IsChanged())">Als meine Menge speichern</button>
+                    <button class="btn small" @onclick="ResetToRecipe">Rezeptmenge</button>
+                    <label class="check small-text"><input type="checkbox" @bind="_showBakerPercent" /> Bäcker-%</label>
+                </div>
+                @if (_message != null) { <p class="ok small-text">@_message</p> }
+            </section>
+
+            <section class="panel">
+                <h3>Kennzahlen</h3>
+                <KeyFigures Analysis="analysis" Factor="factor" />
+            </section>
+
+            @if (!string.IsNullOrWhiteSpace(_recipe.BakeNotes))
+            {
+                <section class="panel">
+                    <h3>Backen</h3>
+                    <p class="pre small-text">@_recipe.BakeNotes</p>
+                </section>
+            }
+            @if (!string.IsNullOrWhiteSpace(_recipe.Notes))
+            {
+                <section class="panel panel-info">
+                    <h3>Notizen</h3>
+                    <p class="pre small-text">@_recipe.Notes</p>
+                </section>
+            }
+        </aside>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool _loaded;
+    private Recipe? _recipe;
+    private int _count = 1;
+    private double _pieceWeight = 1000;
+    private bool _showBakerPercent = true;
+    private bool _confirmDelete;
+    private string? _message;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _recipe = Store.GetRecipe(Id);
+        if (_recipe != null)
+        {
+            _count = _recipe.SavedCount ?? _recipe.Count;
+            _pieceWeight = _recipe.SavedPieceWeight ?? _recipe.PieceWeight;
+        }
+        _confirmDelete = false;
+        _confirmReopen = false;
+        _panId = _recipe?.PanId;
+        _message = null;
+        _loaded = true;
+    }
+
+    private bool IsChanged() =>
+        _recipe != null && (_count != (_recipe.SavedCount ?? _recipe.Count)
+                            || Math.Abs(_pieceWeight - (_recipe.SavedPieceWeight ?? _recipe.PieceWeight)) > 0.01);
+
+    private async Task SaveAdjustment()
+    {
+        if (_recipe == null) return;
+        _recipe.SavedCount = Math.Max(1, _count);
+        _recipe.SavedPieceWeight = Math.Max(10, _pieceWeight);
+        await Store.SaveAsync();
+        _message = "Gespeichert – das Rezept öffnet künftig mit dieser Menge.";
+    }
+
+    private async Task ResetToRecipe()
+    {
+        if (_recipe == null) return;
+        _count = _recipe.Count;
+        _pieceWeight = _recipe.PieceWeight;
+        _recipe.SavedCount = null;
+        _recipe.SavedPieceWeight = null;
+        await Store.SaveAsync();
+        _message = null;
+    }
+
+    private async Task AddDefaultPlan()
+    {
+        if (_recipe == null) return;
+        var bt = RecipeCalculator.Analyze(_recipe, Store.Settings).BreadType;
+        _recipe.Process = Planning.DefaultProcess(bt, false, _recipe.Leavening == Leavening.Hefe);
+        _recipe.BakeProfile = Planning.DefaultBakeProfile(_recipe.PieceWeight, bt, _recipe.Form);
+        _recipe.CoreTemperatureC = Planning.CoreTemperature(bt);
+        _recipe.PreheatTemperatureC = _recipe.BakeProfile.Max(b => b.TemperatureC);
+        _recipe.Temperatures = new TemperaturePlan
+        {
+            TargetDoughC = Planning.DefaultTargetDoughTemp(bt),
+            KneadWarmingC = Planning.DefaultKneadWarming(bt),
+        };
+        foreach (var st in _recipe.Stages.Where(x => x.Type != StageType.Hauptteig && x.PlanHours <= 0))
+            st.PlanHours = st.Type switch
+            {
+                StageType.Sauerteig => 14,
+                StageType.Vorteig => 14,
+                StageType.Quellstueck => 10,
+                StageType.Bruehstueck => 4,
+                _ => 2,
+            };
+        await Store.SaveAsync();
+    }
+
+    private bool _confirmReopen;
+    private Guid? _panId;
+
+    private BakingPan? SelectedPan => _panId is Guid id ? Store.Data.Pans.FirstOrDefault(p => p.Id == id) : null;
+
+    private bool ShowPan(BreadType bt) =>
+        _recipe != null && (_recipe.Form.Contains("kasten", StringComparison.OrdinalIgnoreCase)
+                            || _recipe.PanDoughPerLiter > 0 || _recipe.PanId != null);
+
+    private double DoughPerLiter(BreadType bt) =>
+        _recipe != null && _recipe.PanDoughPerLiter > 0 ? _recipe.PanDoughPerLiter : Guidelines.PanDoughPerLiter(bt);
+
+    private void SelectPan(ChangeEventArgs e, BreadType bt)
+    {
+        _panId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        if (SelectedPan != null) ApplyPan(bt);
+    }
+
+    /// <summary>Stückgewicht so setzen, dass der Teig je Brot die gewählte Form füllt.</summary>
+    private void ApplyPan(BreadType bt)
+    {
+        var pan = SelectedPan;
+        if (_recipe == null || pan == null || pan.VolumeL <= 0) return;
+        var doughPerPan = DoughPerLiter(bt) * pan.VolumeL;
+        _pieceWeight = Math.Round(doughPerPan * (1 - _recipe.BakeLossPercent / 100) / 5) * 5;
+        _message = null;
+    }
+
+    /// <summary>Die aktuelle Teigmenge je Brot als „passt genau“ für dieses Rezept speichern.</summary>
+    private async Task CalibratePan()
+    {
+        var pan = SelectedPan;
+        if (_recipe == null || pan == null || pan.VolumeL <= 0) return;
+        var doughPerPiece = RecipeCalculator.DoughWeight(1, _pieceWeight, _recipe.BakeLossPercent);
+        _recipe.PanDoughPerLiter = Math.Round(doughPerPiece / pan.VolumeL);
+        _recipe.PanId = pan.Id;
+        await Store.SaveAsync();
+        _message = $"Gemerkt: {Fmt.N(_recipe.PanDoughPerLiter)} g Teig je Liter – andere Formen werden jetzt danach berechnet.";
+    }
+
+    private async Task MarkFinished()
+    {
+        if (_recipe == null) return;
+        _recipe.Status = RecipeStatus.Fertig;
+        _recipe.FinishedAt = DateTime.Now;
+        await Store.SaveAsync();
+    }
+
+    private async Task Reopen()
+    {
+        if (_recipe == null) return;
+        _recipe.Status = RecipeStatus.Entwicklung;
+        _recipe.FinishedAt = null;
+        _confirmReopen = false;
+        await Store.SaveAsync();
+    }
+
+    private async Task ToggleFavorite()
+    {
+        if (_recipe == null) return;
+        _recipe.Favorite = !_recipe.Favorite;
+        await Store.SaveAsync();
+    }
+
+    private async Task Duplicate()
+    {
+        if (_recipe == null) return;
+        var copy = AppStore.DeepCopy(_recipe);
+        copy.Id = Guid.NewGuid();
+        copy.Name = _recipe.Name + " (Kopie)";
+        copy.Favorite = false;
+        copy.Created = DateTime.Now;
+        copy.Status = RecipeStatus.Entwicklung;
+        copy.FinishedAt = null;
+        if (copy.Design != null) copy.Design.Name = copy.Name;
+        await Store.SaveRecipeAsync(copy);
+        Nav.NavigateTo($"rezept/{copy.Id}");
+    }
+
+    private async Task Delete()
+    {
+        await Store.DeleteRecipeAsync(Id);
+        Nav.NavigateTo("rezepte");
+    }
+}

@@ -1,0 +1,16 @@
+@inherits LayoutComponentBase
+
+<header class="topbar">
+    <a class="brand" href="">LeckerBroot</a>
+    <nav>
+        <NavLink href="rezepte">Rezepte</NavLink>
+        <NavLink href="assistent" Match="NavLinkMatch.Prefix">Entwickeln</NavLink>
+        <NavLink href="zutaten">Zutaten</NavLink>
+        <NavLink href="formen">Formen</NavLink>
+        <NavLink href="backup">Sicherung</NavLink>
+    </nav>
+</header>
+
+<main class="page">
+    @Body
+</main>

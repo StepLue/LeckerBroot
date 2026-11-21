@@ -1,0 +1,53 @@
+@page "/"
+@inject AppStore Store
+
+<PageTitle>LeckerBroot</PageTitle>
+
+<h1>LeckerBroot</h1>
+
+@if (Store.LoadProblem != null)
+{
+    <p class="warnings">@Store.LoadProblem</p>
+}
+
+<div class="tiles">
+    <a class="tile" href="rezepte">
+        <span class="tile-title">Rezepte</span>
+        <span class="tile-text">@_recipeCount Rezepte suchen und anzeigen</span>
+    </a>
+    <a class="tile tile-accent" href="assistent">
+        <span class="tile-title">Rezept entwickeln</span>
+        <span class="tile-text">Assistent rechnet Mengen, TA und Versäuerung</span>
+    </a>
+    <a class="tile" href="rezept/neu">
+        <span class="tile-title">Rezept eintragen</span>
+        <span class="tile-text">von Papier übernehmen, in Gramm</span>
+    </a>
+    <a class="tile" href="zutaten">
+        <span class="tile-title">Mehle &amp; Zutaten</span>
+        <span class="tile-text">Mehltypen, Wasseranteile</span>
+    </a>
+</div>
+
+@if (_favorites.Count > 0)
+{
+    <h2>Favoriten</h2>
+    <ul class="recipe-list">
+        @foreach (var r in _favorites)
+        {
+            <li><a href="@($"rezept/{r.Id}")">★ @r.Name</a></li>
+        }
+    </ul>
+}
+
+@code {
+    private int _recipeCount;
+    private List<Recipe> _favorites = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _recipeCount = Store.Data.Recipes.Count;
+        _favorites = Store.Data.Recipes.Where(r => r.Favorite).OrderBy(r => r.Name).ToList();
+    }
+}

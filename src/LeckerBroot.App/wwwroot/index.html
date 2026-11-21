@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>LeckerBroot</title>
+    <base href="/" />
+    <script>
+        // Auf GitHub Pages liegt die App im Unterordner /<repository>/ – Basis-Pfad passend setzen.
+        // (Am PC unter localhost bleibt es bei "/".)
+        (function () {
+            if (location.hostname.endsWith("github.io")) {
+                var repo = location.pathname.split("/")[1];
+                if (repo) document.querySelector("base").setAttribute("href", "/" + repo + "/");
+            }
+        })();
+    </script>
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="icon-192.png" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="LeckerBroot" />
+    <meta name="theme-color" content="#156082" />
+</head>
+<body>
+    <div id="app">
+        <div class="loading">LeckerBroot wird geladen …</div>
+    </div>
+
+    <div id="blazor-error-ui">
+        Ein Fehler ist aufgetreten.
+        <a href="" class="reload">Neu laden</a>
+        <a class="dismiss">✕</a>
+    </div>
+
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js');
+        }
+    </script>
+</body>
+</html>

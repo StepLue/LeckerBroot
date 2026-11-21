@@ -1,0 +1,56 @@
+@* Bearbeitbare Liste der Arbeitsschritte (Hauptteig bis Auskühlen). *@
+
+<div class="table-wrap">
+    <table class="ing-table edit">
+        <thead>
+            <tr><th>Schritt</th><th>Art</th><th class="num">Minuten</th><th>Hinweis</th><th></th></tr>
+        </thead>
+        <tbody>
+            @for (var i = 0; i < Steps.Count; i++)
+            {
+                var idx = i;
+                var step = Steps[i];
+                <tr>
+                    <td><input class="name-input" @bind="step.Name" /></td>
+                    <td>
+                        <select @bind="step.Kind">
+                            @foreach (var k in Enum.GetValues<ProcessKind>())
+                            {
+                                <option value="@k">@Planning.Name(k)</option>
+                            }
+                        </select>
+                    </td>
+                    <td class="num"><input class="num-input" type="number" min="0" step="5" @bind="step.Minutes" /></td>
+                    <td><input class="note-input" @bind="step.Note" /></td>
+                    <td class="nowrap">
+                        <button class="btn tiny" title="nach oben" disabled="@(idx == 0)" @onclick="() => Move(idx, -1)">▲</button>
+                        <button class="btn btn-danger tiny" title="entfernen" @onclick="() => Steps.RemoveAt(idx)">✕</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+<div class="row-between">
+    <button class="btn small" @onclick="Add">+ Schritt</button>
+    <span class="muted small-text">Vom Hauptteig bis in den Ofen: <strong>@Planning.Duration(Steps.Where(s => s.Kind != ProcessKind.Auskuehlen).Sum(s => s.Minutes))</strong></span>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<ProcessStep> Steps { get; set; } = new();
+
+    private void Add()
+    {
+        var insertAt = Steps.FindIndex(s => s.Kind == ProcessKind.Auskuehlen);
+        var step = new ProcessStep { Name = "Neuer Schritt", Kind = ProcessKind.Sonstiges, Minutes = 15 };
+        if (insertAt >= 0) Steps.Insert(insertAt, step);
+        else Steps.Add(step);
+    }
+
+    private void Move(int index, int delta)
+    {
+        var target = index + delta;
+        if (target < 0 || target >= Steps.Count) return;
+        (Steps[index], Steps[target]) = (Steps[target], Steps[index]);
+    }
+}

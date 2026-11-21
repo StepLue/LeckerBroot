@@ -1,0 +1,54 @@
+@* Zeigt alle Stufen eines Rezepts mit Grammangaben (skaliert) und Bäckerprozenten. *@
+
+@foreach (var stage in Stages)
+{
+    var stageTotal = stage.Ingredients.Sum(i => i.Grams) * Factor;
+    <section class="stage">
+        <div class="stage-head">
+            <h3>@stage.Name</h3>
+            <span class="stage-total">@Fmt.G(stageTotal)</span>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(stage.Duration) || !string.IsNullOrWhiteSpace(stage.Temperature))
+        {
+            <div class="stage-meta">
+                @if (!string.IsNullOrWhiteSpace(stage.Duration)) { <span>⏱ @stage.Duration</span> }
+                @if (!string.IsNullOrWhiteSpace(stage.Temperature)) { <span>🌡 @stage.Temperature</span> }
+                @if (!stage.WaterCountsToTa) { <span class="muted">Wasser zählt nicht zur TA</span> }
+            </div>
+        }
+        <table class="ing-table">
+            <thead>
+                <tr><th>Zutat</th><th class="num">Menge</th>@if (ShowBakerPercent) { <th class="num">Bäcker-%</th> }</tr>
+            </thead>
+            <tbody>
+                @foreach (var si in stage.Ingredients)
+                {
+                    <tr>
+                        <td>@Names.Display(si.Ingredient)</td>
+                        <td class="num strong">@Fmt.G(si.Grams * Factor)</td>
+                        @if (ShowBakerPercent)
+                        {
+                            <td class="num muted">@Fmt.P(Analysis.BakerPercent(si.Grams))</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+        @if (!string.IsNullOrWhiteSpace(stage.Instructions))
+        {
+            <p class="stage-text">@stage.Instructions</p>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public List<Stage> Stages { get; set; } = new();
+
+    /// <summary>Analyse der Referenzmenge (für die Bäckerprozente).</summary>
+    [Parameter, EditorRequired] public RecipeAnalysis Analysis { get; set; } = new();
+
+    /// <summary>Skalierungsfaktor für die Grammangaben.</summary>
+    [Parameter] public double Factor { get; set; } = 1;
+
+    [Parameter] public bool ShowBakerPercent { get; set; } = true;
+}

@@ -1,0 +1,188 @@
+@page "/zutaten"
+@inject AppStore Store
+
+<PageTitle>Mehle &amp; Zutaten – LeckerBroot</PageTitle>
+
+<div class="page-head compact">
+    <h1>Mehle &amp; Zutaten</h1>
+    <div class="actions">
+        <button class="btn" @onclick="() => Add(IngredientKind.Mehl)">+ Mehl</button>
+        <button class="btn" @onclick="() => Add(IngredientKind.Sonstiges)">+ Zutat</button>
+        <button class="btn btn-accent" @onclick="Save" disabled="@(!_dirty)">Speichern</button>
+    </div>
+</div>
+
+@if (_message != null)
+{
+    <p class="ok">@_message</p>
+}
+
+<p class="hint">
+    <strong>Mehlanteil</strong> und <strong>Wasseranteil</strong> steuern die Berechnung: Mehl = 100 % / 0 %, Wasser = 0 % / 100 %,
+    Milch ≈ 0 % / 87 %, Anstellgut TA 200 = 50 % / 50 %. Änderungen wirken auf neu ausgewählte Zutaten –
+    bestehende Rezepte behalten ihre Werte.
+</p>
+
+@if (_loaded)
+{
+    foreach (var kind in Enum.GetValues<IngredientKind>())
+    {
+        var items = Store.Data.Ingredients.Where(i => i.Kind == kind).OrderBy(Names.Display).ToList();
+        if (items.Count == 0) continue;
+        <section class="panel">
+        <h3>@Names.Of(kind)</h3>
+        <div class="table-wrap">
+            <table class="ing-table edit">
+                <thead>
+                    <tr>
+                        <th>Name</th><th>Art</th><th>Getreide</th><th>Typ</th>
+                        <th class="num">Mehl %</th><th class="num">Wasser %</th><th>Notiz</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var ing in items)
+                    {
+                        var i = ing;
+                        <tr>
+                            <td><input value="@i.Name" @onchange="e => SetName(i, e)" /></td>
+                            <td>
+                                <select value="@i.Kind.ToString()" @onchange="e => SetKind(i, e)">
+                                    @foreach (var k in Enum.GetValues<IngredientKind>())
+                                    {
+                                        <option value="@k.ToString()">@Names.Of(k)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                <select value="@i.Grain.ToString()" @onchange="e => SetGrain(i, e)">
+                                    @foreach (var g in Enum.GetValues<Grain>())
+                                    {
+                                        <option value="@g.ToString()">@Names.Of(g)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><input class="short" value="@i.FlourType" @onchange="e => SetFlourType(i, e)" /></td>
+                            <td class="num"><input class="num-input" type="number" min="0" max="100" value="@Pct(i.FlourFraction)" @onchange="e => SetFraction(i, e, true)" /></td>
+                            <td class="num"><input class="num-input" type="number" min="0" max="100" value="@Pct(i.WaterFraction)" @onchange="e => SetFraction(i, e, false)" /></td>
+                            <td><input value="@i.Notes" @onchange="e => SetNotes(i, e)" /></td>
+                            <td>
+                                @if (_confirmDelete == i.Id)
+                                {
+                                    <button class="btn btn-danger small" @onclick="() => Delete(i)">Löschen?</button>
+                                }
+                                else
+                                {
+                                    <button class="btn small" title="Löschen" @onclick="() => _confirmDelete = i.Id">✕</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        </section>
+    }
+
+    <section class="panel panel-tint">
+    <h3>Einstellungen</h3>
+    <label class="check">
+        <input type="checkbox" checked="@Store.Settings.IncludeStarterInTotals" @onchange="ToggleStarter" />
+        Mehl und Wasser des Anstellguts in Gesamtmehl und TA einrechnen
+    </label>
+    <p class="hint">Aus: Anstellgut zählt als Zutat obendrauf (üblich in vielen Rezepten). Ein: genauere TA und Versäuerung.</p>
+    </section>
+}
+
+@code {
+    private bool _loaded;
+    private bool _dirty;
+    private string? _message;
+    private Guid? _confirmDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _loaded = true;
+    }
+
+    private static string Pct(double fraction) =>
+        Math.Round(fraction * 100, 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private void Add(IngredientKind kind)
+    {
+        var ing = new Ingredient
+        {
+            Name = kind == IngredientKind.Mehl ? "Neues Mehl" : "Neue Zutat",
+            Kind = kind,
+            FlourFraction = kind == IngredientKind.Mehl ? 1 : 0,
+        };
+        Store.Data.Ingredients.Add(ing);
+        _dirty = true;
+        _message = null;
+    }
+
+    private void SetName(Ingredient i, ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(text)) i.Name = text.Trim();
+        _dirty = true;
+    }
+
+    private void SetFlourType(Ingredient i, ChangeEventArgs e)
+    {
+        i.FlourType = e.Value?.ToString()?.Trim() ?? string.Empty;
+        _dirty = true;
+    }
+
+    private void SetNotes(Ingredient i, ChangeEventArgs e)
+    {
+        i.Notes = e.Value?.ToString() ?? string.Empty;
+        _dirty = true;
+    }
+
+    private void SetKind(Ingredient i, ChangeEventArgs e)
+    {
+        if (!Enum.TryParse<IngredientKind>(e.Value?.ToString(), out var kind)) return;
+        i.Kind = kind;
+        if (kind == IngredientKind.Mehl && i.FlourFraction == 0) i.FlourFraction = 1;
+        if (kind == IngredientKind.Fluessigkeit && i.WaterFraction == 0) i.WaterFraction = 1;
+        _dirty = true;
+    }
+
+    private void SetGrain(Ingredient i, ChangeEventArgs e)
+    {
+        if (Enum.TryParse<Grain>(e.Value?.ToString(), out var grain)) i.Grain = grain;
+        _dirty = true;
+    }
+
+    private void SetFraction(Ingredient i, ChangeEventArgs e, bool flour)
+    {
+        var text = e.Value?.ToString()?.Replace(',', '.');
+        if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v)) return;
+        v = Math.Clamp(v, 0, 100) / 100;
+        if (flour) i.FlourFraction = v; else i.WaterFraction = v;
+        _dirty = true;
+    }
+
+    private async Task Delete(Ingredient i)
+    {
+        Store.Data.Ingredients.Remove(i);
+        _confirmDelete = null;
+        await Store.SaveAsync();
+        _dirty = false;
+        _message = $"„{i.Name}“ gelöscht. Rezepte, die sie verwenden, behalten ihre Kopie.";
+    }
+
+    private async Task ToggleStarter(ChangeEventArgs e)
+    {
+        Store.Settings.IncludeStarterInTotals = e.Value is bool b && b;
+        await Store.SaveAsync();
+    }
+
+    private async Task Save()
+    {
+        await Store.SaveAsync();
+        _dirty = false;
+        _message = "Gespeichert.";
+    }
+}

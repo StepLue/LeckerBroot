@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/LeckerBroot.Core/LeckerBroot.Core.csproj" />
+  <Project Path="src/LeckerBroot.App/LeckerBroot.App.csproj" />
+</Solution>

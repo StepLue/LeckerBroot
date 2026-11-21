@@ -1,0 +1,54 @@
+@* Bearbeitbares Backprofil inkl. Vorheizen und Kerntemperatur. *@
+
+<div class="form-grid">
+    <label>Vorheizen (°C) <input type="number" min="100" max="300" step="5" value="@Css(PreheatTemperatureC)" @onchange="e => SetDouble(e, v => PreheatTemperatureCChanged.InvokeAsync(v))" /></label>
+    <label>Vorheizen (min) <input type="number" min="0" max="120" step="5" value="@Css(PreheatMinutes)" @onchange="e => SetDouble(e, v => PreheatMinutesChanged.InvokeAsync(v))" /></label>
+    <label>Kerntemperatur (°C) <input type="number" min="80" max="100" step="1" value="@Css(CoreTemperatureC)" @onchange="e => SetDouble(e, v => CoreTemperatureCChanged.InvokeAsync(v))" /></label>
+</div>
+<div class="table-wrap">
+    <table class="ing-table edit">
+        <thead>
+            <tr><th>Phase</th><th class="num">°C</th><th class="num">Minuten</th><th>Dampf</th><th>Hinweis</th><th></th></tr>
+        </thead>
+        <tbody>
+            @for (var i = 0; i < Phases.Count; i++)
+            {
+                var idx = i;
+                var phase = Phases[i];
+                <tr>
+                    <td><input class="name-input" @bind="phase.Name" /></td>
+                    <td class="num"><input class="num-input" type="number" min="0" max="300" step="5" @bind="phase.TemperatureC" /></td>
+                    <td class="num"><input class="num-input" type="number" min="0" max="180" step="1" @bind="phase.Minutes" /></td>
+                    <td><input type="checkbox" @bind="phase.Steam" /></td>
+                    <td><input class="note-input" @bind="phase.Note" /></td>
+                    <td><button class="btn btn-danger tiny" title="entfernen" @onclick="() => Phases.RemoveAt(idx)">✕</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+<div class="row-between">
+    <button class="btn small" @onclick="Add">+ Phase</button>
+    <span class="muted small-text">Backzeit gesamt: <strong>@Planning.Duration(Phases.Sum(p => p.Minutes))</strong></span>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<BakePhase> Phases { get; set; } = new();
+    [Parameter] public double PreheatTemperatureC { get; set; }
+    [Parameter] public EventCallback<double> PreheatTemperatureCChanged { get; set; }
+    [Parameter] public double PreheatMinutes { get; set; }
+    [Parameter] public EventCallback<double> PreheatMinutesChanged { get; set; }
+    [Parameter] public double CoreTemperatureC { get; set; }
+    [Parameter] public EventCallback<double> CoreTemperatureCChanged { get; set; }
+
+    private static string Css(double v) => SourdoughGuide.Css(v);
+
+    private static async Task SetDouble(ChangeEventArgs e, Func<double, Task> set)
+    {
+        var text = e.Value?.ToString()?.Replace(',', '.');
+        if (double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v))
+            await set(v);
+    }
+
+    private void Add() => Phases.Add(new BakePhase { Name = "Phase", TemperatureC = 200, Minutes = 10 });
+}

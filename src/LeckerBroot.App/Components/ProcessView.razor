@@ -1,0 +1,53 @@
+@* Ablauf und Backprofil eines Rezepts (nur Anzeige). *@
+
+@if (Recipe.Process.Count > 0)
+{
+    <table class="ing-table">
+        <thead><tr><th>Ablauf</th><th class="num">Dauer</th><th>Hinweis</th></tr></thead>
+        <tbody>
+            @foreach (var p in Recipe.Process)
+            {
+                <tr>
+                    <td>@p.Name</td>
+                    <td class="num">@Planning.Duration(p.Minutes)</td>
+                    <td class="muted small-text">
+                        @if (p.Kind == ProcessKind.Kneten && WaterTemp is double w)
+                        {
+                            <span>Schüttwasser ca. @Fmt.N(w) °C · </span>
+                        }
+                        @p.Note
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+@if (Recipe.BakeProfile.Count > 0)
+{
+    <table class="ing-table">
+        <thead><tr><th>Backen</th><th class="num">°C</th><th class="num">Dauer</th><th>Hinweis</th></tr></thead>
+        <tbody>
+            <tr class="muted">
+                <td>Vorheizen</td><td class="num">@Fmt.N(Recipe.PreheatTemperatureC)</td><td class="num">@Planning.Duration(Recipe.PreheatMinutes)</td><td class="small-text">Backstein/Topf mit aufheizen</td>
+            </tr>
+            @foreach (var b in Recipe.BakeProfile)
+            {
+                <tr>
+                    <td>@b.Name @(b.Steam ? "💨" : "")</td>
+                    <td class="num">@Fmt.N(b.TemperatureC)</td>
+                    <td class="num">@Planning.Duration(b.Minutes)</td>
+                    <td class="muted small-text">@b.Note</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <p class="small-text muted">Kerntemperatur ca. @Fmt.N(Recipe.CoreTemperatureC) °C · Backzeit gesamt @Planning.Duration(Recipe.BakeProfile.Sum(x => x.Minutes))</p>
+}
+
+@code {
+    [Parameter, EditorRequired] public Recipe Recipe { get; set; } = new();
+
+    private double? WaterTemp => Recipe.Temperatures == null || Recipe.Temperatures.TargetDoughC <= 0
+        ? null
+        : Planning.WaterTemperature(Recipe.Temperatures, Recipe.Stages.Any(s => s.Type != StageType.Hauptteig));
+}

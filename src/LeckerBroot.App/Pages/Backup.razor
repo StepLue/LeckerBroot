@@ -1,0 +1,70 @@
+@page "/backup"
+@inject AppStore Store
+@inject IJSRuntime JS
+
+<PageTitle>Sicherung – LeckerBroot</PageTitle>
+
+<h1>Sicherung &amp; Übertragung</h1>
+
+<p class="hint">
+    Deine Daten liegen nur in diesem Browser auf diesem Gerät. Mit der Sicherungsdatei kannst du sie aufbewahren
+    oder vom PC aufs iPad übertragen (z. B. per Mail, OneDrive oder iCloud Drive).
+</p>
+
+<section class="panel">
+    <h3>Sicherung speichern</h3>
+    <p>@_recipeCount Rezepte, @_ingredientCount Zutaten</p>
+    <button class="btn btn-accent" @onclick="Export">Sicherungsdatei herunterladen</button>
+</section>
+
+<section class="panel">
+    <h3>Sicherung einlesen</h3>
+    <label class="check"><input type="radio" name="mode" checked="@(!_replace)" @onchange="() => _replace = false" /> Zusammenführen (gleiche Rezepte werden aktualisiert)</label>
+    <label class="check"><input type="radio" name="mode" checked="@_replace" @onchange="() => _replace = true" /> Alles ersetzen</label>
+    <InputFile OnChange="Import" accept=".json,application/json" />
+    @if (_message != null) { <p class="@(_error ? "warnings" : "ok")">@_message</p> }
+</section>
+
+@code {
+    private int _recipeCount;
+    private int _ingredientCount;
+    private bool _replace;
+    private string? _message;
+    private bool _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        Count();
+    }
+
+    private void Count()
+    {
+        _recipeCount = Store.Data.Recipes.Count;
+        _ingredientCount = Store.Data.Ingredients.Count;
+    }
+
+    private async Task Export()
+    {
+        var name = $"leckerbroot-sicherung-{DateTime.Now:yyyy-MM-dd}.json";
+        await JS.InvokeVoidAsync("leckerBroot.download", name, Store.ExportJson());
+    }
+
+    private async Task Import(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var stream = e.File.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+            _message = await Store.ImportJsonAsync(json, _replace);
+            _error = false;
+            Count();
+        }
+        catch (Exception ex)
+        {
+            _message = "Die Datei konnte nicht gelesen werden: " + ex.Message;
+            _error = true;
+        }
+    }
+}

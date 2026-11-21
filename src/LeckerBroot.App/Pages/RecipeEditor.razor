@@ -1,0 +1,274 @@
+@page "/rezept/neu"
+@page "/rezept/{Id:guid}/bearbeiten"
+@inject AppStore Store
+@inject NavigationManager Nav
+
+<PageTitle>Rezept bearbeiten – LeckerBroot</PageTitle>
+
+@if (_recipe == null)
+{
+    <p>@(_notFound ? "Rezept nicht gefunden." : "Lade …")</p>
+}
+else if (_recipe.IsLocked)
+{
+    <h1>@_recipe.Name ist fertig</h1>
+    <p class="hint">Fertige Rezepte lassen sich nur noch in der Menge ändern. Zum Bearbeiten in der Rezeptansicht „Kopie weiterentwickeln“ oder „Zurück in Entwicklung“ wählen.</p>
+    <a class="btn small" href="@($"rezept/{_recipe.Id}")">Zum Rezept</a>
+}
+else
+{
+    var analysis = RecipeCalculator.Analyze(_recipe, Store.Settings);
+
+    <div class="page-head compact">
+        <h1>@(_isNew ? "Rezept eintragen" : "Rezept bearbeiten")</h1>
+        <div class="actions">
+            <button class="btn btn-accent" @onclick="Save">Speichern</button>
+            <button class="btn" @onclick="Cancel">Abbrechen</button>
+        </div>
+    </div>
+
+    if (_hadDesign)
+    {
+        <p class="warnings">Dieses Rezept stammt aus dem Assistenten. Wenn du es hier von Hand änderst, wird die Verbindung zum Assistenten gelöst.</p>
+    }
+
+    <section class="panel">
+    <div class="form-grid">
+        <label class="wide">Name <input @bind="_recipe.Name" /></label>
+        <label>Triebmittel
+            <select @bind="_recipe.Leavening">
+                @foreach (var l in Enum.GetValues<Leavening>())
+                {
+                    <option value="@l">@Names.Of(l)</option>
+                }
+            </select>
+        </label>
+        <label>Form <input @bind="_recipe.Form" placeholder="z. B. Kasten, freigeschoben" /></label>
+        <label>Schlagworte <input @bind="_tags" placeholder="durch Komma getrennt" /></label>
+    </div>
+
+    <h3>Menge, für die die Grammangaben gelten</h3>
+    <div class="form-grid">
+        <label>Anzahl <input type="number" min="1" @bind="_recipe.Count" /></label>
+        <label>Stückgewicht fertiges Brot (g) <input type="number" min="10" step="10" @bind="_recipe.PieceWeight" /></label>
+        <label>Backverlust (%) <input type="number" min="0" max="40" step="0.5" @bind="_recipe.BakeLossPercent" /></label>
+        <div class="hint">
+            Tipp: Von Papier einfach die Grammangaben abschreiben. Stimmen Anzahl und Stückgewicht nicht genau,
+            ist das nicht schlimm – die App skaliert über das Teiggewicht (aktuell @Fmt.G(analysis.TotalDough)).
+        </div>
+    </div>
+    </section>
+
+    <h2>Stufen</h2>
+    for (var s = 0; s < _recipe.Stages.Count; s++)
+    {
+        var stageIndex = s;
+        var stage = _recipe.Stages[s];
+        <section class="panel stage-edit">
+            <div class="stage-head">
+                <input class="stage-name" @bind="stage.Name" />
+                <select @bind="stage.Type">
+                    @foreach (var t in Enum.GetValues<StageType>())
+                    {
+                        <option value="@t">@Names.Of(t)</option>
+                    }
+                </select>
+                <div class="actions small">
+                    <button class="btn" title="nach oben" disabled="@(stageIndex == 0)" @onclick="() => MoveStage(stageIndex, -1)">▲</button>
+                    <button class="btn" title="nach unten" disabled="@(stageIndex == _recipe.Stages.Count - 1)" @onclick="() => MoveStage(stageIndex, 1)">▼</button>
+                    <button class="btn btn-danger" title="Stufe entfernen" @onclick="() => _recipe.Stages.RemoveAt(stageIndex)">✕</button>
+                </div>
+            </div>
+            <div class="form-grid">
+                <label>Dauer <input @bind="stage.Duration" placeholder="z. B. 12–16 h" /></label>
+                <label>Temperatur <input @bind="stage.Temperature" placeholder="z. B. 24–26 °C" /></label>
+                @if (stage.Type != StageType.Hauptteig)
+                {
+                    <label>Standzeit für Planung (h) <input type="number" min="0" max="72" step="0.5" @bind="stage.PlanHours" /></label>
+                    <label class="check"><input type="checkbox" @bind="stage.FollowsPrevious" /> baut auf vorheriger Stufe auf</label>
+                }
+                <label class="check"><input type="checkbox" @bind="stage.WaterCountsToTa" /> Wasser zählt zur TA</label>
+            </div>
+
+            <table class="ing-table edit">
+                <thead><tr><th>Zutat</th><th class="num">Gramm</th><th class="num">Bäcker-%</th><th></th></tr></thead>
+                <tbody>
+                    @for (var i = 0; i < stage.Ingredients.Count; i++)
+                    {
+                        var ingIndex = i;
+                        var si = stage.Ingredients[i];
+                        <tr>
+                            <td>
+                                <IngredientSelect Value="si.Ingredient" ValueChanged="ing => si.Ingredient = ing" />
+                            </td>
+                            <td class="num"><input class="num-input" type="number" min="0" step="1" @bind="si.Grams" /></td>
+                            <td class="num muted">@Fmt.P(analysis.BakerPercent(si.Grams))</td>
+                            <td><button class="btn btn-danger small" @onclick="() => stage.Ingredients.RemoveAt(ingIndex)">✕</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <button class="btn" @onclick="() => AddIngredient(stage)">+ Zutat</button>
+
+            <label class="block">Anleitung
+                <textarea rows="2" @bind="stage.Instructions"></textarea>
+            </label>
+        </section>
+    }
+    <div class="actions">
+        <button class="btn" @onclick="() => AddStage(StageType.Sauerteig)">+ Sauerteig</button>
+        <button class="btn" @onclick="() => AddStage(StageType.Vorteig)">+ Vorteig</button>
+        <button class="btn" @onclick="() => AddStage(StageType.Quellstueck)">+ Quellstück</button>
+        <button class="btn" @onclick="() => AddStage(StageType.Bruehstueck)">+ Brühstück</button>
+        <button class="btn" @onclick="() => AddStage(StageType.Hauptteig)">+ Hauptteig</button>
+    </div>
+
+    <section class="panel">
+        <h3>Temperaturen</h3>
+        <div class="form-grid">
+            <label>Zielteigtemperatur (°C) <input type="number" min="15" max="35" step="0.5" @bind="_recipe.Temperatures.TargetDoughC" /></label>
+            <label>Mehltemperatur (°C) <input type="number" min="0" max="35" step="0.5" @bind="_recipe.Temperatures.FlourC" /></label>
+            <label>Temperatur Vorstufen (°C) <input type="number" min="0" max="40" step="0.5" @bind="_recipe.Temperatures.PreDoughC" /></label>
+            <label>Erwärmung beim Kneten (°C) <input type="number" min="0" max="15" step="0.5" @bind="_recipe.Temperatures.KneadWarmingC" /></label>
+        </div>
+        <p class="small-text">Schüttwasser ca. <strong>@Fmt.N(Planning.WaterTemperature(_recipe.Temperatures, _recipe.Stages.Any(x => x.Type != StageType.Hauptteig))) °C</strong></p>
+    </section>
+
+    <div class="view-grid even">
+        <section class="panel">
+            <h3>Ablauf (Hauptteig bis Auskühlen)</h3>
+            <ProcessEditor Steps="_recipe.Process" />
+        </section>
+        <section class="panel">
+            <h3>Backprofil</h3>
+            <BakeProfileEditor Phases="_recipe.BakeProfile"
+                               @bind-PreheatTemperatureC="_recipe.PreheatTemperatureC"
+                               @bind-PreheatMinutes="_recipe.PreheatMinutes"
+                               @bind-CoreTemperatureC="_recipe.CoreTemperatureC" />
+        </section>
+    </div>
+
+    <div class="view-grid even">
+        <section class="panel">
+            <h3>Backen &amp; Notizen</h3>
+            <label class="block">Backen (Ofen, Temperaturen, Zeiten)
+                <textarea rows="3" @bind="_recipe.BakeNotes"></textarea>
+            </label>
+            <label class="block">Notizen
+                <textarea rows="3" @bind="_recipe.Notes"></textarea>
+            </label>
+        </section>
+        <section class="panel panel-tint">
+            <h3>Kennzahlen</h3>
+            <KeyFigures Analysis="analysis" />
+        </section>
+    </div>
+
+    <div class="actions">
+        <button class="btn btn-accent" @onclick="Save">Speichern</button>
+        <button class="btn" @onclick="Cancel">Abbrechen</button>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+
+    private Recipe? _recipe;
+    private bool _isNew;
+    private bool _notFound;
+    private bool _hadDesign;
+    private string _tags = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _notFound = false;
+        if (Id is Guid id)
+        {
+            var original = Store.GetRecipe(id);
+            if (original == null)
+            {
+                _recipe = null;
+                _notFound = true;
+                return;
+            }
+            _recipe = AppStore.DeepCopy(original);   // erst beim Speichern übernehmen
+            _isNew = false;
+        }
+        else
+        {
+            _recipe = NewRecipe();
+            _isNew = true;
+        }
+        _recipe.Temperatures ??= new TemperaturePlan();
+        _hadDesign = _recipe.Design != null;
+        _tags = string.Join(", ", _recipe.Tags);
+    }
+
+    private Recipe NewRecipe()
+    {
+        var r = new Recipe { Name = "Neues Rezept", Count = 1, PieceWeight = 1000, BakeLossPercent = 12 };
+        var sour = new Stage { Name = "Sauerteig", Type = StageType.Sauerteig, Duration = "12–16 h", Temperature = "24–26 °C" };
+        sour.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Mehl, SeedData.Rye1150Id, GenericFlour) });
+        sour.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Fluessigkeit, SeedData.WaterId, SeedData.Water) });
+        sour.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Anstellgut, SeedData.RyeStarterId, SeedData.RyeStarter) });
+        var main = new Stage { Name = "Hauptteig", Type = StageType.Hauptteig };
+        main.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Mehl, SeedData.Rye1150Id, GenericFlour) });
+        main.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Fluessigkeit, SeedData.WaterId, SeedData.Water) });
+        main.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Salz, SeedData.SaltId, SeedData.Salt) });
+        r.Stages.Add(sour);
+        r.Stages.Add(main);
+        return r;
+    }
+
+    private static Ingredient GenericFlour() => new() { Name = "Mehl", Kind = IngredientKind.Mehl, FlourFraction = 1 };
+
+    private void AddStage(StageType type)
+    {
+        if (_recipe == null) return;
+        var stage = new Stage
+        {
+            Name = Names.Of(type),
+            Type = type,
+            WaterCountsToTa = type != StageType.Quellstueck,
+        };
+        stage.Ingredients.Add(new StageIngredient { Ingredient = Store.Default(IngredientKind.Fluessigkeit, SeedData.WaterId, SeedData.Water) });
+        // Hauptteig bleibt am Ende
+        var mainIndex = _recipe.Stages.FindIndex(s => s.Type == StageType.Hauptteig);
+        if (type != StageType.Hauptteig && mainIndex >= 0) _recipe.Stages.Insert(mainIndex, stage);
+        else _recipe.Stages.Add(stage);
+    }
+
+    private void AddIngredient(Stage stage)
+    {
+        var flour = Store.Flours.FirstOrDefault()?.Clone() ?? GenericFlour();
+        stage.Ingredients.Add(new StageIngredient { Ingredient = flour });
+    }
+
+    private void MoveStage(int index, int delta)
+    {
+        if (_recipe == null) return;
+        var target = index + delta;
+        if (target < 0 || target >= _recipe.Stages.Count) return;
+        (_recipe.Stages[index], _recipe.Stages[target]) = (_recipe.Stages[target], _recipe.Stages[index]);
+    }
+
+    private async Task Save()
+    {
+        if (_recipe == null || _recipe.IsLocked) return;
+        _recipe.Name = string.IsNullOrWhiteSpace(_recipe.Name) ? "Neues Rezept" : _recipe.Name.Trim();
+        _recipe.Count = Math.Max(1, _recipe.Count);
+        _recipe.Tags = _tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        _recipe.Design = null;
+        var analysis = RecipeCalculator.Analyze(_recipe, Store.Settings);
+        _recipe.Category = Names.Of(analysis.BreadType);
+        await Store.SaveRecipeAsync(_recipe);
+        Nav.NavigateTo($"rezept/{_recipe.Id}");
+    }
+
+    private void Cancel()
+    {
+        if (!_isNew && _recipe != null) Nav.NavigateTo($"rezept/{_recipe.Id}");
+        else Nav.NavigateTo("rezepte");
+    }
+}

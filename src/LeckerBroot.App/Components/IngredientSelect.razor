@@ -1,0 +1,45 @@
+@* Auswahl einer Zutat aus der Datenbank. Gibt immer eine Kopie zurück. *@
+@inject AppStore Store
+
+<select class="ing-select" value="@(Value?.Id.ToString() ?? "")" @onchange="OnChange">
+    @if (Value == null)
+    {
+        <option value="">@(Placeholder ?? "– bitte wählen –")</option>
+    }
+    else if (!Options.Any(o => o.Id == Value.Id))
+    {
+        <option value="@Value.Id.ToString()">@Names.Display(Value) (nicht in der Datenbank)</option>
+    }
+    @foreach (var group in Options.GroupBy(o => o.Kind).OrderBy(g => g.Key))
+    {
+        <optgroup label="@Names.Of(group.Key)">
+            @foreach (var o in group.OrderBy(Names.Display))
+            {
+                <option value="@o.Id.ToString()">@Names.Display(o)</option>
+            }
+        </optgroup>
+    }
+</select>
+
+@code {
+    [Parameter] public Ingredient? Value { get; set; }
+    [Parameter] public EventCallback<Ingredient> ValueChanged { get; set; }
+
+    /// <summary>Nur diese Arten anbieten (null = alle).</summary>
+    [Parameter] public IngredientKind[]? Kinds { get; set; }
+
+    /// <summary>Nur diese Zutaten anbieten (z. B. die Mehle der Mischung).</summary>
+    [Parameter] public IEnumerable<Ingredient>? Only { get; set; }
+
+    [Parameter] public string? Placeholder { get; set; }
+
+    private IEnumerable<Ingredient> Options =>
+        Only ?? Store.Data.Ingredients.Where(i => Kinds == null || Kinds.Contains(i.Kind));
+
+    private async Task OnChange(ChangeEventArgs e)
+    {
+        if (!Guid.TryParse(e.Value?.ToString(), out var id)) return;
+        var ing = Options.FirstOrDefault(o => o.Id == id) ?? Store.GetIngredient(id);
+        if (ing != null) await ValueChanged.InvokeAsync(ing.Clone());
+    }
+}

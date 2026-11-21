@@ -1,0 +1,156 @@
+@page "/planen/{Id:guid}"
+@inject AppStore Store
+@inject IJSRuntime JS
+
+<PageTitle>Backtag planen – LeckerBroot</PageTitle>
+
+@if (_recipe == null)
+{
+    <p>@(_loaded ? "Rezept nicht gefunden." : "Lade …")</p>
+}
+else
+{
+    var analysis = RecipeCalculator.Analyze(_recipe, Store.Settings);
+    var target = RecipeCalculator.DoughWeight(_count, _pieceWeight, _recipe.BakeLossPercent);
+    var factor = analysis.TotalDough > 0 ? target / analysis.TotalDough : 1;
+    var schedule = Planning.BuildSchedule(_recipe, _finish, factor, _recipe.Temperatures);
+    var begin = schedule.Begin;
+    var span = _finish - begin;
+
+    <div class="page-head compact">
+        <h1>Backtag planen: @_recipe.Name</h1>
+        <div class="actions">
+            <a class="btn small" href="@($"rezept/{_recipe.Id}")">← Zum Rezept</a>
+        </div>
+    </div>
+
+    <div class="view-grid">
+        <section class="panel">
+            <h3>Zeitplan</h3>
+            @if (schedule.Warnings.Count > 0)
+            {
+                <ul class="warnings">
+                    @foreach (var w in schedule.Warnings) { <li>@w</li> }
+                </ul>
+            }
+            @if (begin < DateTime.Now)
+            {
+                <p class="warnings">
+                    Der Plan beginnt in der Vergangenheit (@Planning.Day(begin) @Planning.Time(begin)).
+                    Frühestens fertig: <strong>@Planning.Day(Earliest(span)) @Planning.Time(Earliest(span))</strong>
+                    <button class="btn tiny" @onclick="() => _finish = Earliest(span)">übernehmen</button>
+                </p>
+            }
+            <div class="timeline">
+                @foreach (var day in schedule.Items.GroupBy(i => i.Start.Date))
+                {
+                    <div class="tl-day">@Planning.Day(day.Key)</div>
+                    foreach (var item in day)
+                    {
+                        <div class="tl-item @KindClass(item.Kind)">
+                            <div class="tl-time">@Planning.Time(item.Start)</div>
+                            <div class="tl-body">
+                                <div class="tl-title">
+                                    @item.Title
+                                    @if (item.HasDuration)
+                                    {
+                                        <span class="tl-dur">@Planning.Duration((item.End - item.Start).TotalMinutes) · bis @Planning.Time(item.End)@(item.End.Date != item.Start.Date ? " (" + Planning.Day(item.End) + ")" : "")</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(item.Detail))
+                                {
+                                    <div class="tl-detail">@item.Detail</div>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </section>
+
+        <aside class="side-col">
+            <section class="panel panel-tint">
+                <h3>Brot aus dem Ofen um</h3>
+                <input type="datetime-local" @bind="_finish" @bind:format="yyyy-MM-ddTHH:mm" />
+                <div class="actions">
+                    <button class="btn tiny" @onclick="() => _finish = Earliest(span)">frühestmöglich</button>
+                    <button class="btn tiny" @onclick="() => _finish = _finish.AddDays(1)">+1 Tag</button>
+                    <button class="btn tiny" @onclick="() => _finish = _finish.AddHours(1)">+1 h</button>
+                    <button class="btn tiny" @onclick="() => _finish = _finish.AddHours(-1)">−1 h</button>
+                </div>
+                <p class="small-text">
+                    Start: <strong>@Planning.Day(begin) @Planning.Time(begin)</strong><br />
+                    Gesamtdauer: <strong>@Planning.Duration(span.TotalMinutes)</strong>
+                </p>
+            </section>
+
+            <section class="panel">
+                <h3>Menge</h3>
+                <div class="scaler">
+                    <label>Anzahl <input type="number" min="1" step="1" @bind="_count" @bind:event="oninput" /></label>
+                    <span class="times">×</span>
+                    <label>Brot (g) <input type="number" min="10" step="10" @bind="_pieceWeight" @bind:event="oninput" /></label>
+                </div>
+                <p class="small-text muted">Teig gesamt @Fmt.G(target) – die Mengen im Plan sind schon umgerechnet.</p>
+            </section>
+
+            <section class="panel">
+                <h3>Erinnerungen</h3>
+                <p class="small-text">
+                    Lädt eine Kalenderdatei mit allen Schritten herunter. Auf dem iPad öffnen und „Alle hinzufügen“ –
+                    der Kalender erinnert dich dann zu jedem Schritt, auch wenn die App geschlossen ist.
+                </p>
+                <button class="btn btn-accent small" @onclick="() => ExportIcs(schedule)">In Kalender übernehmen</button>
+            </section>
+        </aside>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool _loaded;
+    private Recipe? _recipe;
+    private DateTime _finish;
+    private int _count = 1;
+    private double _pieceWeight = 1000;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Store.EnsureLoadedAsync();
+        _recipe = Store.GetRecipe(Id);
+        _loaded = true;
+        if (_recipe == null) return;
+        _recipe.Temperatures ??= new TemperaturePlan();
+        _count = _recipe.SavedCount ?? _recipe.Count;
+        _pieceWeight = _recipe.SavedPieceWeight ?? _recipe.PieceWeight;
+        // Vorschlag: morgen 10:00
+        _finish = DateTime.Today.AddDays(1).AddHours(10);
+    }
+
+    /// <summary>Frühester Fertig-Zeitpunkt, wenn jetzt (aufgerundet auf 15 min) begonnen wird.</summary>
+    private static DateTime Earliest(TimeSpan span)
+    {
+        var now = DateTime.Now;
+        var rounded = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0).AddMinutes(Math.Ceiling(now.Minute / 15.0) * 15);
+        var finish = rounded + span;
+        return new DateTime(finish.Year, finish.Month, finish.Day, finish.Hour, finish.Minute, 0);
+    }
+
+    private static string KindClass(ScheduleKind k) => k switch
+    {
+        ScheduleKind.Vorstufe => "k-pre",
+        ScheduleKind.Ofen => "k-oven",
+        ScheduleKind.Backen => "k-bake",
+        ScheduleKind.Fertig => "k-done",
+        _ => "k-main",
+    };
+
+    private async Task ExportIcs(Schedule schedule)
+    {
+        if (_recipe == null) return;
+        var ics = Planning.ToIcs(schedule, _recipe.Name);
+        var name = $"backtag-{_finish:yyyy-MM-dd}.ics";
+        await JS.InvokeVoidAsync("leckerBroot.download", name, ics, "text/calendar");
+    }
+}
